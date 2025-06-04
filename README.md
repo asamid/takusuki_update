@@ -48,9 +48,10 @@ This project is licensed under the [MIT License](./LICENSE).
 
 ## Acknowledgements
 
-This script was originally inspired by [joinmisskey/bash-install](https://github.com/joinmisskey/bash-install)  
-by [syuilo](https://github.com/syuilo) and the Misskey contributors.  
-Significant enhancements were made for interactive use and operational clarity.
+Parts of this script were inspired by and adapted from  
+[bash-install](https://github.com/joinmisskey/bash-install),  
+Copyright (c) 2021 aqz/tamaina, joinmisskey  
+Licensed under the MIT License.
 
 ---
 
