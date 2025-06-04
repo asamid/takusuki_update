@@ -4,17 +4,16 @@
 # Author: asami (https://takusuki.com)
 # License: MIT
 #
-# This script was originally inspired by:
-#   https://github.com/joinmisskey/bash-install
-#   Copyright (c) 2022 syuilo and contributors
-#   Licensed under the MIT License
+# Based on: https://github.com/joinmisskey/bash-install
+#           Copyright (c) 2022 syuilo and contributors
+#           MIT License
 #
-# Substantial modifications have been made to support:
-#   - interactive version selection
-#   - environment auto-detection
-#   - enhanced user feedback during update process
+# Modifications:
+#   - Interactive version selection
+#   - Environment auto-detection
+#   - Enhanced user feedback
 
-# 補助関数（カラー表示）
+# カラー付き出力関数
 print_step() { tput setaf 6; echo ">>> $1"; tput setaf 7; }
 print_section() { echo ""; tput setaf 4; echo "==== $1 ===="; tput setaf 7; }
 print_ok() { tput setaf 2; echo "? $1"; tput setaf 7; }
@@ -23,10 +22,10 @@ print_fail() { tput setaf 1; echo "? $1"; tput setaf 7; }
 # オプション初期化
 specified_version=""
 
-# 起動時にモードを選択
+# 起動時モード選択
 print_section "Misskey Update Mode"
-echo "1. 通常の最新版アップデート"
-echo "2. タグ一覧から選んでアップデート"
+echo "1. 最新版へアップデート"
+echo "2. タグから選んでアップデート"
 echo "3. master へ強制リセット"
 echo ""
 
@@ -38,7 +37,7 @@ case "$mode" in
   *) echo "無効な選択です"; exit 1 ;;
 esac
 
-# ユーザーがタグ一覧から選択する関数
+# タグ選択関数
 select_version() {
   echo "Fetching available tags..."
   tag_list=$(su "$misskey_user" -c "cd ~/$misskey_directory && git fetch --tags > /dev/null && git tag --sort=-creatordate")
@@ -63,17 +62,17 @@ select_version() {
   done
 }
 
-# rootチェック
-print_section "Check: root user"
+# root権限チェック
+print_section "Checking root permissions"
 if [ "$(whoami)" != 'root' ]; then
   print_fail "NG. This script must be run as root."
   exit 1
 else
-  print_ok "OK. I am root user."
+  print_ok "OK. Running as root."
 fi
 
-# 環境読み込み
-print_section "Import environment and detect method"
+# 環境設定を読み込み
+print_section "Loading environment settings"
 if [ -f "/root/.misskey.env" ]; then
   . "/root/.misskey.env"
   if [ -f "/home/$misskey_user/.misskey.env" ]; then
@@ -86,19 +85,19 @@ if [ -f "/root/.misskey.env" ]; then
     misskey_directory=misskey
     misskey_localhost=localhost
     method=systemd
-    echo "use default"
+    echo "(default settings applied)"
   fi
 else
   misskey_user=misskey
   misskey_directory=misskey
   misskey_localhost=localhost
   method=systemd
-  echo "use default"
+  echo "(default settings applied)"
 fi
 
 echo "method: $method / user: $misskey_user / dir: $misskey_directory / $misskey_localhost:$misskey_port"
 
-# バージョン選択処理
+# バージョン選択処理開始
 if [ "$specified_version" == "choose" ]; then
   select_version
   specified_version="$selected_tag"
@@ -108,8 +107,8 @@ if [ "$method" == "systemd" ]; then
 
 print_section "Update process (systemd)"
 
-#region Git操作
-print_step "Running git checkout / pull / tag update..."
+# Git操作開始
+print_step "Fetching and checking out source..."
 
 su "$misskey_user" << MKEOF
 set -eu
@@ -130,7 +129,6 @@ git submodule update --init
 MKEOF
 
 print_ok "Git update complete"
-#endregion
 
 print_step "Stopping systemd service..."
 systemctl stop "$host"
@@ -140,35 +138,34 @@ print_step "Fixing directory ownership..."
 chown -R "$misskey_user":"$misskey_user" "/home/$misskey_user/$misskey_directory"
 print_ok "Permission fixed"
 
-#region Build & Migration
-print_step "Running clean, patch, install, build, and migrate..."
+# ビルド・マイグレーション開始
+print_step "Cleaning, patching, installing, building, migrating..."
 
 su "$misskey_user" << MKEOF
 set -eu
 cd ~/$misskey_directory
 
-echo "Process: clean"
+echo "Cleaning..."
 pnpm run clean
 
-echo "Modify MAX_NOTE_TEXT_LENGTH"
+echo "Modifying MAX_NOTE_TEXT_LENGTH..."
 sed -i 's/export const MAX_NOTE_TEXT_LENGTH = 3000;/export const MAX_NOTE_TEXT_LENGTH = 5000;/' packages/backend/src/const.ts || true
 
-echo "Installing dependencies"
+echo "Installing dependencies..."
 NODE_ENV=production pnpm install --frozen-lockfile
 
-echo "Building Misskey"
+echo "Building Misskey..."
 NODE_ENV=production pnpm run build
 
-echo "Running migration"
+echo "Running migration..."
 pnpm run migrate
 MKEOF
 
 print_ok "Build and migration complete"
-#endregion
 
 print_step "Restarting systemd service..."
 systemctl restart "$host"
 print_ok "Service restarted"
 
-print_section "Misskey update finished successfully!"
+print_ok "Update completed successfully"
 fi
