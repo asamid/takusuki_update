@@ -5,7 +5,7 @@
 # License: MIT
 #
 # Based on: https://github.com/joinmisskey/bash-install
-#           Copyright (c) 2022 syuilo and contributors
+#           Copyright (c) 2021 aqz/tamaina, joinmisskey  
 #           MIT License
 #
 # Modifications:
