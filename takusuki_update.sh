@@ -151,6 +151,9 @@ pnpm run clean
 echo "Modifying MAX_NOTE_TEXT_LENGTH..."
 sed -i 's/export const MAX_NOTE_TEXT_LENGTH = 3000;/export const MAX_NOTE_TEXT_LENGTH = 5000;/' packages/backend/src/const.ts || true
 
+echo "Download unknown.png into frontend/assets"
+wget -q -O /home/misskey/misskey/packages/frontend/assets/unknown.png "https://labo.takusuki.com/unknown.png" || echo "Download failed, continuing..."
+
 echo "Installing dependencies..."
 NODE_ENV=production pnpm install --frozen-lockfile
 
