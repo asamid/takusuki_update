@@ -138,7 +138,7 @@ print_step "Fixing directory ownership..."
 chown -R "$misskey_user":"$misskey_user" "/home/$misskey_user/$misskey_directory"
 print_ok "Permission fixed"
 
-# ビルド・マイグレーション開始
+# 卓すき仕様でビルド
 print_step "Cleaning, patching, installing, building, migrating..."
 
 su "$misskey_user" << MKEOF
@@ -148,9 +148,11 @@ cd ~/$misskey_directory
 echo "Cleaning..."
 pnpm run clean
 
+# 5000文字
 echo "Modifying MAX_NOTE_TEXT_LENGTH..."
 sed -i 's/export const MAX_NOTE_TEXT_LENGTH = 3000;/export const MAX_NOTE_TEXT_LENGTH = 5000;/' packages/backend/src/const.ts || true
 
+# 絵文字ミュートをBlankへ
 echo "Download unknown.png into frontend/assets"
 wget -q -O /home/misskey/misskey/packages/frontend/assets/unknown.png "https://labo.takusuki.com/unknown.png" || echo "Download failed, continuing..."
 
