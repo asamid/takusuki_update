@@ -118,6 +118,10 @@ git reset --hard
 
 if [ "$specified_version" != "" ] && [ "$specified_version" != "latest" ]; then
   echo "Checking out version: $specified_version"
+  # 既に存在するブランチがあれば削除
+  if git rev-parse --verify "update-$specified_version" >/dev/null 2>&1; then
+    git branch -D "update-$specified_version"
+  fi
   git checkout "tags/$specified_version" -b "update-$specified_version"
 else
   echo "Pulling latest changes"
@@ -148,11 +152,9 @@ cd ~/$misskey_directory
 echo "Cleaning..."
 pnpm run clean
 
-# 5000文字
 echo "Modifying MAX_NOTE_TEXT_LENGTH..."
 sed -i 's/export const MAX_NOTE_TEXT_LENGTH = 3000;/export const MAX_NOTE_TEXT_LENGTH = 5000;/' packages/backend/src/const.ts || true
 
-# 絵文字ミュートをBlankへ
 echo "Download unknown.png into frontend/assets"
 wget -q -O /home/misskey/misskey/packages/frontend/assets/unknown.png "https://labo.takusuki.com/unknown.png" || echo "Download failed, continuing..."
 
