@@ -85,4 +85,4 @@ sudo bash takusuki_update.sh
 このスクリプトは [joinmisskey/bash-install](https://github.com/joinmisskey/bash-install) にインスパイアされて作成されました。  
 原作への敬意を表しつつ、対話モードやタグ選択機能、文字数制限改変など多数の改良を加えています。
 
-作者: [asami](https://takusuki.com)
+作者: [asami](https://takusuki.com/@asami)
