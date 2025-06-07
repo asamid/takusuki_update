@@ -1,0 +1,42 @@
+# .gitignore の内容（Misskey カスタム運用向け）
+gitignore_content = """
+# Node.js modules
+node_modules/
+pnpm-lock.yaml
+
+# Misskey build output
+built/
+packages/frontend/dist/
+packages/backend/migrations/*.js
+packages/backend/migrations/*.d.ts
+
+# Logs and temp files
+*.log
+logs/
+.cache/
+*.tmp
+
+# Secrets and environment files
+.env
+*.env
+secret.json
+/root/.misskey.env
+/home/misskey/.misskey.env
+/home/misskey/.misskey-docker.env
+
+# Editor/OS-specific files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# User config files
+user_gamesystem.json
+game_system_map.json
+"""
+
+# 保存
+output_path = Path("/mnt/data/.gitignore")
+output_path.write_text(gitignore_content.strip(), encoding="utf-8")
+
+output_path.name
