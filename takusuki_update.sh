@@ -164,10 +164,17 @@ echo "Installing dependencies..."
 NODE_ENV=production pnpm install --frozen-lockfile
 
 echo "Building Misskey..."
-NODE_ENV=production pnpm run build
+NODE_ENV=production pnpm run build || { echo "❌ Build failed"; exit 1; }
+
+# ビルド結果確認
+if [ ! -f packages/backend/built/config.js ]; then
+  echo "❌ build/config.js が生成されていません。ビルド失敗の可能性があります。"
+  exit 1
+fi
 
 echo "Running migration..."
 pnpm run migrate
+
 MKEOF
 
 print_ok "Build and migration complete"
