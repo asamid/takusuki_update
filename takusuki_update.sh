@@ -42,6 +42,8 @@ select_version() {
   echo "Fetching available tags..."
   tag_list=$(su "$misskey_user" -c "cd ~/$misskey_directory && git fetch --tags > /dev/null && git tag --sort=-creatordate")
   mapfile -t tags <<< "$tag_list"
+  
+  tags=("${tags[@]:0:41}")
 
   echo ""
   echo "Available Tags:"
