@@ -8,6 +8,7 @@
 #           Copyright (c) 2021 aqz/tamaina, joinmisskey  
 #           MIT License
 #
+# Version: 2025.6.16
 # Modifications:
 #   - Interactive version selection
 #   - Environment auto-detection
@@ -23,6 +24,7 @@ print_fail() { tput setaf 1; echo "? $1"; tput setaf 7; }
 specified_version=""
 
 # 起動時モード選択
+print_section "takusuki_update.sh v2025.6.16"
 print_section "Misskey Update Mode"
 echo "1. 最新版へアップデート"
 echo "2. タグから選んでアップデート"
