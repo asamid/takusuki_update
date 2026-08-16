@@ -1,6 +1,6 @@
 # Takusuki Update
 
-Takusuki Update3 v4.0.0は、systemdで運用するMisskeyを安全に更新するための
+Takusuki Update v4.0.0は、systemdで運用するMisskeyを安全に更新するための
 対話式・非対話式updaterです。Ubuntu上の通常インストールを対象とし、Docker
 環境には対応していません。
 
