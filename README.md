@@ -1,88 +1,132 @@
-# takusuki_update
+# Takusuki Update
 
-Misskey のカスタムアップデートスクリプトと、[takusuki.com](https://takusuki.com) における独自の改変内容（AGPL v3 準拠）を含むリポジトリです。
+Takusuki Update3 v4.0.0は、systemdで運用するMisskeyを安全に更新するための
+対話式・非対話式updaterです。Ubuntu上の通常インストールを対象とし、Docker
+環境には対応していません。
 
----
+Live Stagingで検証したexact updaterと、Misskey patch・assetを収録した検証可能な
+HTTPS bundleを組み合わせます。通常updateではPostgreSQL backupを自動実行しません。
 
-## 🔧 主な改変内容
+## 主な機能
 
-### 1. 投稿文字数制限の緩和
-Misskeyの投稿最大文字数をデフォルトの 3000 文字から 5000 文字に拡張しています。
+- 最新の正式stable releaseへのupdate
+- 40件以上の正式tagからの選択
+- official `origin/master`への強制reset
+- migration-aware rollback
+- 独立したPostgreSQL custom-format backup
+- HTTPS bundleとSHA-256 sidecarの検証
+- ZIP path、symlink、special file、manifest、個別hash/sizeの検証
+- network failure時だけのverified cache fallback
+- official Misskey remote allowlistとexact commit解決
+- isolated worktreeでのpatch compatibility test
+- target pnpm/Corepack version isolationとCWD非依存実行
+- service停止前preflight、bounded readiness、HTTP/API health check
+- fail-closed動作とbroad `git clean`の禁止
 
-- 対象ファイル: `packages/backend/src/const.ts`
-- 差分パッチ: `patches/maxnote5000.patch`
+## 対話UI
 
-適用方法：
+引数なしで起動すると次のメニューを表示します。
 
-```bash
-cd ~/misskey
-patch -p1 < /path/to/patches/maxnote5000.patch
+```text
+1. 最新版へアップデート
+2. タグから選んでアップデート
+3. master へ強制リセット
+4. ロールバック
+5. DBをバックアップ
+0. 終了
 ```
 
----
+## インストールと実行
 
-### 2. 画像の差し替え（unknown.png）
-
-未登録のカスタム絵文字などが表示される際のデフォルト画像 `unknown.png` を差し替えています。
-
-- 差し替えファイル: `assets/unknown.png`
-- 配置先: `packages/frontend/assets/unknown.png`
-
-適用方法：
+runtime配布の正本は `https://labo.takusuki.com/update3/` です。
 
 ```bash
-cp /path/to/assets/unknown.png ~/misskey/packages/frontend/assets/unknown.png
+wget https://labo.takusuki.com/update3/takusuki_update3.sh
+wget https://labo.takusuki.com/update3/takusuki_update3.sh.sha256
+sha256sum -c takusuki_update3.sh.sha256
+chmod 0755 takusuki_update3.sh
+sudo ./takusuki_update3.sh
 ```
 
----
-
-## 🛠 takusuki_update.sh とは？
-
-Misskey サーバー向けのカスタムアップデートスクリプトです。  
-`systemd` によって Misskey を運用している環境に対応しており、**Docker 環境には非対応**です。
-
-このスクリプトは以下の処理を自動で行います：
-
-- 起動時に対話形式でアップデートモードを選択
-- Git タグの一覧からバージョン選択とチェックアウト
-- `.misskey.env` を自動読み込み（環境変数設定）
-- 所有権の修正、クリーンビルド、DBマイグレーションの実行
-- `MAX_NOTE_TEXT_LENGTH` の 5000 文字化処理
-
----
-
-## ▶ 使用方法
+非対話CLIの例:
 
 ```bash
-sudo bash takusuki_update.sh
+sudo ./takusuki_update3.sh --stable --yes
+sudo ./takusuki_update3.sh --tag 2026.7.0 --yes
+sudo ./takusuki_update3.sh --master-reset --yes
+sudo ./takusuki_update3.sh --rollback
+sudo ./takusuki_update3.sh --db-backup --yes
+./takusuki_update3.sh --stable --check
+./takusuki_update3.sh --tag 2026.7.0 --check-patches
 ```
 
-起動後、以下の選択肢が表示されます：
+actual非対話updateにはrootと`--yes`が必要です。downgradeには追加で
+`--allow-downgrade`が必要です。
 
-1. 最新版にアップデート（`master` を pull）  
-2. Git タグ一覧からバージョンを選んでアップデート  
-3. `master` へ強制リセット  
+## Security model
 
----
+updaterは、official Misskey remoteのallowlist、fetch後のexact commit解決、HTTPS
+bundle、SHA-256 sidecar、ZIP traversal防止、重複entry・symlink・special file拒否、
+bundle manifestと個別hash/sizeを検証します。isolated official worktreeで全patchの
+互換性を確認し、preflightが完了するまでserviceを停止しません。
 
-## ✅ 必要条件
+download済みbundleのintegrity failureではcacheへfallbackせず停止します。cacheは
+network failure時だけ利用し、利用前に再検証します。install/build/migration failure後に
+壊れたserviceを無条件起動せず、readinessは時間制限付きです。
 
-- Misskey を通常ユーザーでインストールしていること（※ Docker は非対応）
-- 以下のコマンドが使用可能であること：`pnpm`, `git`, `systemctl`
-- `/root/.misskey.env` または `/home/<ユーザー名>/.misskey.env` に必要な設定が記述されていること
-- Misskey サービスを `systemctl` で制御可能な構成であること
+## Rollbackの制約
 
----
+rollback前に現在と更新前のmigration ledgerをbyte比較します。異なる場合は
+source-only rollbackを拒否します。DB restoreは自動実行しません。
 
-## 📜 ライセンス
+「source rollback可能」と「DB backupからrestore可能」は別の判断です。migrationを
+含む復旧は、DB互換性とbackupを人間が確認したうえで別途計画してください。
 
-このリポジトリは [MIT ライセンス](./LICENSE) のもとで公開されています。
+## PostgreSQL backup
 
----
+通常updateはDB backupを作成しません。メニュー5または`--db-backup`で明示した場合だけ、
+custom-format `pg_dump`を実行します。完成後に`pg_restore --list`、file size、SHA-256、
+entry count、PostgreSQL versionを検証・記録し、失敗したpartial dumpは有効backupとして
+扱いません。
 
-## 🙏 謝辞
+## Bundle sourceと配布
 
-このスクリプトは [joinmisskey/bash-install](https://github.com/joinmisskey/bash-install) にインスパイアされて作成されました。  
-原作への敬意を表しつつ、対話モードやタグ選択機能、文字数制限改変など多数の改良を加えています。
+repositoryの[bundle source](bundle/takusuki-update3-bundle/)から
+`scripts/build-bundle.sh`でreproducible ZIPを生成できます。`scripts/verify-release.sh`は
+updater、bundle、manifest、secret patternを検証します。
 
-作者: [asami](https://takusuki.com/@asami)
+公開runtime artifactは次の4ファイルです。
+
+- `takusuki_update3.sh`
+- `takusuki_update3.sh.sha256`
+- `takusuki-update3-bundle.zip`
+- `takusuki-update3-bundle.zip.sha256`
+
+GitHubはsource、history、review、CIの正本、labo.takusuki.comはupdaterが実行時に参照する
+runtime distribution endpointです。PR merge後にGitHub Releaseを作成する場合も、Live
+Stagingで検証したexact SHAの4 artifactだけをrelease assetにします。
+
+## Legacy
+
+旧v2系updater、patch、assetは履歴を保つため[legacy](legacy/)へ移動しました。新規運用では
+使用しないでください。旧 `.gitignore` は誤ってPython生成コードを含む非UTF-8 fileだったため、
+証跡として`legacy/gitignore-corrupted.txt`へ移動し、rootには有効なignore規則を配置しました。
+
+## ライセンス
+
+repository全体がMIT-onlyではありません。
+
+- Takusuki updaterとhelper scripts: [MIT](LICENSE)
+- Misskey由来patch: [AGPL-3.0-only](LICENSES/AGPL-3.0-only.txt)
+- `unknown.png`: `UNKNOWN / clarification required`
+
+詳細は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)と
+[license audit](docs/license-audit.md)を参照してください。
+
+## 検証
+
+```bash
+./scripts/verify-release.sh
+```
+
+この検証はlocal repository内だけで完結し、Misskey hostへ接続しません。

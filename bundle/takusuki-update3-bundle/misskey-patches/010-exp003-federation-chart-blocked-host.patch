@@ -1,0 +1,446 @@
+diff --git a/packages/backend/src/core/chart/charts/federation-blocked-host-query.integration.test.ts b/packages/backend/src/core/chart/charts/federation-blocked-host-query.integration.test.ts
+new file mode 100644
+index 0000000000..9e7ccf19d7
+--- /dev/null
++++ b/packages/backend/src/core/chart/charts/federation-blocked-host-query.integration.test.ts
+@@ -0,0 +1,183 @@
++/*
++ * SPDX-FileCopyrightText: syuilo and misskey-project
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++import pg from 'pg';
++import { afterAll, beforeAll, describe, expect, test } from 'vitest';
++import { buildFederationChartMetricQuery, federationChartMetrics, type FederationChartMetric } from './federation-blocked-host-query.js';
++
++const databaseUrl = process.env.EXP003_DATABASE_URL;
++const describeWithDatabase = databaseUrl == null ? describe.skip : describe;
++
++const candidateColumns = {
++	sub: '"followeeHost"',
++	pub: '"followerHost"',
++	pubsub: '"followeeHost"',
++	subActive: '"followeeHost"',
++	pubActive: '"followerHost"',
++} as const satisfies Record<FederationChartMetric, string>;
++
++function buildOriginalQuery(metric: FederationChartMetric): string {
++	const column = candidateColumns[metric];
++
++	if (metric === 'sub' || metric === 'pub') {
++		return `SELECT count(DISTINCT following.${column})
++FROM following
++WHERE following.${column} IS NOT NULL
++	AND following.${column} NOT ILIKE ALL($1::text[])
++	AND following.${column} NOT IN (
++		SELECT instance.host FROM instance WHERE instance."suspensionState" != 'none'
++	)`;
++	}
++
++	if (metric === 'pubsub') {
++		return `SELECT count(DISTINCT following.${column})
++FROM following
++WHERE following.${column} IS NOT NULL
++	AND following.${column} NOT ILIKE ALL($1::text[])
++	AND following.${column} NOT IN (
++		SELECT instance.host FROM instance WHERE instance."suspensionState" != 'none'
++	)
++	AND following.${column} IN (
++		SELECT f."followerHost" FROM following f WHERE f."followerHost" IS NOT NULL
++	)`;
++	}
++
++	return `SELECT count(instance.id)
++FROM instance
++WHERE instance.host IN (
++		SELECT following.${column} FROM following WHERE following.${column} IS NOT NULL
++	)
++	AND instance.host NOT ILIKE ALL($1::text[])
++	AND instance."suspensionState" = 'none'
++	AND instance."isNotResponding" = false`;
++}
++
++function asOriginalRowQuery(metric: FederationChartMetric): string {
++	const query = buildOriginalQuery(metric).replace(/;$/, '');
++
++	if (metric === 'sub' || metric === 'pub' || metric === 'pubsub') {
++		return query.replace(/^SELECT count\(DISTINCT following\.("(?:followee|follower)Host")\)/, 'SELECT DISTINCT following.$1 AS key');
++	}
++
++	return query.replace(/^SELECT count\(instance\.id\)/, 'SELECT instance.id::text AS key');
++}
++
++function asRewrittenRowQuery(metric: FederationChartMetric): string {
++	const query = buildFederationChartMetricQuery(metric).replace(/\$1/g, '$2');
++
++	if (metric === 'sub' || metric === 'pub' || metric === 'pubsub') {
++		return query.replace('SELECT count(*)\nFROM candidates candidate', 'SELECT candidate.host AS key\nFROM candidates candidate');
++	}
++
++	return query.replace('SELECT count(instance.id)\nFROM instance', 'SELECT instance.id::text AS key\nFROM instance');
++}
++
++describeWithDatabase('EXP-003 PostgreSQL equivalence', () => {
++	const client = new pg.Client({ connectionString: databaseUrl });
++
++	beforeAll(async () => {
++		await client.connect();
++		await client.query(`
++CREATE TEMP TABLE following (
++	id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
++	"followerHost" text,
++	"followeeHost" text
++);
++CREATE TEMP TABLE instance (
++	id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
++	host text NOT NULL,
++	"suspensionState" text NOT NULL,
++	"isNotResponding" boolean NOT NULL
++);
++INSERT INTO following ("followerHost", "followeeHost") VALUES
++	('allowed.example', 'subscriber-only.example'),
++	('allowed.example', 'allowed.example'),
++	('blocked.example', 'sub.blocked.example'),
++	('sub.blocked.example', 'WILD2.example'),
++	('MiXeD.Blocked.Example', 'WILD22.example'),
++	('WILD1.example', 'percentZZ.example'),
++	('WILD12.example', 'underY.example'),
++	('percentABC.example', 'suspended.example'),
++	('underX.example', 'quiet.example'),
++	('suspended.example', 'blocked.example'),
++	('quiet.example', NULL),
++	(NULL, 'allowed.example');
++INSERT INTO instance (host, "suspensionState", "isNotResponding") VALUES
++	('allowed.example', 'none', false),
++	('subscriber-only.example', 'none', false),
++	('blocked.example', 'none', false),
++	('sub.blocked.example', 'none', false),
++	('MiXeD.Blocked.Example', 'none', false),
++	('WILD1.example', 'none', false),
++	('WILD12.example', 'none', false),
++	('WILD2.example', 'none', false),
++	('WILD22.example', 'none', false),
++	('percentABC.example', 'none', false),
++	('percentZZ.example', 'none', false),
++	('underX.example', 'none', false),
++	('underY.example', 'none', false),
++	('suspended.example', 'suspended', false),
++	('quiet.example', 'none', true);
++`);
++	});
++
++	afterAll(async () => {
++		await client.end();
++	});
++
++	test.each([
++		['empty', []],
++		['literal', ['BLOCKED.EXAMPLE']],
++		['wildcards', ['wild_.example', 'percent%.example', 'under_.example']],
++		['combined', ['BLOCKED.EXAMPLE', 'wild_.example', 'percent%.example', 'under_.example']],
++	] as const)('%s rules preserve all five metric counts', async (_name, blockedHosts) => {
++		const expandedRules = blockedHosts.flatMap(rule => [rule, `%.${rule}`]);
++
++		for (const metric of federationChartMetrics) {
++			const original = await client.query<{ count: string }>(buildOriginalQuery(metric), [expandedRules]);
++			const rewritten = await client.query<{ count: string }>(buildFederationChartMetricQuery(metric), [blockedHosts]);
++
++			expect(rewritten.rows[0].count, metric).toBe(original.rows[0].count);
++		}
++	});
++
++	test.each([
++		['empty', []],
++		['literal', ['BLOCKED.EXAMPLE']],
++		['wildcards', ['wild_.example', 'percent%.example', 'under_.example']],
++		['combined', ['BLOCKED.EXAMPLE', 'wild_.example', 'percent%.example', 'under_.example']],
++	] as const)('%s rules have zero bidirectional set difference', async (_name, blockedHosts) => {
++		const expandedRules = blockedHosts.flatMap(rule => [rule, `%.${rule}`]);
++
++		for (const metric of federationChartMetrics) {
++			const comparison = await client.query<{ original_minus_rewritten: string; rewritten_minus_original: string }>(`
++WITH original_rows AS MATERIALIZED (
++${asOriginalRowQuery(metric)}
++), rewritten_rows AS MATERIALIZED (
++${asRewrittenRowQuery(metric)}
++)
++SELECT
++	(SELECT count(*) FROM (SELECT * FROM original_rows EXCEPT SELECT * FROM rewritten_rows) difference)::text AS original_minus_rewritten,
++	(SELECT count(*) FROM (SELECT * FROM rewritten_rows EXCEPT SELECT * FROM original_rows) difference)::text AS rewritten_minus_original
++`, [expandedRules, blockedHosts]);
++
++			expect(comparison.rows[0], metric).toEqual({
++				original_minus_rewritten: '0',
++				rewritten_minus_original: '0',
++			});
++		}
++	});
++
++	test('combined fixture exercises suspended, not-responding, duplicate, NULL and wildcard cases', async () => {
++		const blockedHosts = ['BLOCKED.EXAMPLE', 'wild_.example', 'percent%.example', 'under_.example'];
++		const expected = { sub: '4', pub: '3', pubsub: '2', subActive: '3', pubActive: '2' };
++
++		for (const metric of federationChartMetrics) {
++			const result = await client.query<{ count: string }>(buildFederationChartMetricQuery(metric), [blockedHosts]);
++
++			expect(result.rows[0].count, metric).toBe(expected[metric]);
++		}
++	});
++});
+diff --git a/packages/backend/src/core/chart/charts/federation-blocked-host-query.test.ts b/packages/backend/src/core/chart/charts/federation-blocked-host-query.test.ts
+new file mode 100644
+index 0000000000..57c9d99de1
+--- /dev/null
++++ b/packages/backend/src/core/chart/charts/federation-blocked-host-query.test.ts
+@@ -0,0 +1,41 @@
++/*
++ * SPDX-FileCopyrightText: syuilo and misskey-project
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++import { describe, expect, test } from 'vitest';
++import { buildFederationChartMetricQuery, federationChartMetrics } from './federation-blocked-host-query.js';
++
++describe(buildFederationChartMetricQuery, () => {
++	test.each(federationChartMetrics)('%s uses a single blocked-host array parameter', metric => {
++		const query = buildFederationChartMetricQuery(metric);
++
++		expect(query.match(/\$1/g)).toHaveLength(1);
++		expect(query).toContain('FROM unnest($1::text[]) AS rule');
++		expect(query).not.toContain(':...blocked');
++	});
++
++	test.each([
++		['sub', '"followeeHost"'],
++		['pub', '"followerHost"'],
++		['pubsub', '"followeeHost"'],
++		['subActive', '"followeeHost"'],
++		['pubActive', '"followerHost"'],
++	] as const)('%s selects candidates from %s', (metric, column) => {
++		expect(buildFederationChartMetricQuery(metric)).toContain(`SELECT DISTINCT f.${column} AS host`);
++	});
++
++	test('keeps wildcard rules on the ILIKE path', () => {
++		const query = buildFederationChartMetricQuery('pub');
++
++		expect(query).toContain("position('%' in rule) > 0 OR position('_' in rule) > 0 AS is_pattern");
++		expect(query).toContain("candidate.host ILIKE blocked.rule OR candidate.host ILIKE ('%.' || blocked.rule)");
++	});
++
++	test('keeps the metric-specific active and pubsub filters', () => {
++		expect(buildFederationChartMetricQuery('pubsub')).toContain('SELECT following."followerHost"');
++		expect(buildFederationChartMetricQuery('subActive')).toContain('instance."isNotResponding" = false');
++		expect(buildFederationChartMetricQuery('pubActive')).toContain('instance."isNotResponding" = false');
++		expect(buildFederationChartMetricQuery('sub')).not.toContain('instance."isNotResponding" = false');
++	});
++});
+diff --git a/packages/backend/src/core/chart/charts/federation-blocked-host-query.ts b/packages/backend/src/core/chart/charts/federation-blocked-host-query.ts
+new file mode 100644
+index 0000000000..2bd766a7ed
+--- /dev/null
++++ b/packages/backend/src/core/chart/charts/federation-blocked-host-query.ts
+@@ -0,0 +1,88 @@
++/*
++ * SPDX-FileCopyrightText: syuilo and misskey-project
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++export const federationChartMetrics = ['sub', 'pub', 'pubsub', 'subActive', 'pubActive'] as const;
++
++export type FederationChartMetric = typeof federationChartMetrics[number];
++
++const candidateColumns = {
++	sub: '"followeeHost"',
++	pub: '"followerHost"',
++	pubsub: '"followeeHost"',
++	subActive: '"followeeHost"',
++	pubActive: '"followerHost"',
++} as const satisfies Record<FederationChartMetric, string>;
++
++/**
++ * Builds the EXP-003 FederationChart query.
++ *
++ * Literal blocked-host rules use equality against generated DNS suffixes. Rules
++ * containing PostgreSQL ILIKE wildcards (`%` or `_`) stay on the ILIKE path so
++ * that the existing query's matching semantics are preserved.
++ */
++export function buildFederationChartMetricQuery(metric: FederationChartMetric): string {
++	const candidateColumn = candidateColumns[metric];
++	const common = `WITH candidates AS MATERIALIZED (
++	SELECT DISTINCT f.${candidateColumn} AS host
++	FROM following f
++	WHERE f.${candidateColumn} IS NOT NULL
++), blocked_rules AS MATERIALIZED (
++	SELECT lower(rule) AS rule,
++		position('%' in rule) > 0 OR position('_' in rule) > 0 AS is_pattern
++	FROM unnest($1::text[]) AS rule
++), candidate_suffixes AS MATERIALIZED (
++	SELECT c.host,
++		array_to_string(parts.value[position.value:array_length(parts.value, 1)], '.') AS suffix
++	FROM candidates c
++	CROSS JOIN LATERAL (SELECT string_to_array(lower(c.host), '.') AS value) parts
++	CROSS JOIN LATERAL generate_subscripts(parts.value, 1) AS position(value)
++), blocked_candidates AS MATERIALIZED (
++	SELECT suffix.host
++	FROM candidate_suffixes suffix
++	JOIN blocked_rules blocked ON NOT blocked.is_pattern AND blocked.rule = suffix.suffix
++	UNION
++	SELECT candidate.host
++	FROM candidates candidate
++	JOIN blocked_rules blocked ON blocked.is_pattern
++		AND (candidate.host ILIKE blocked.rule OR candidate.host ILIKE ('%.' || blocked.rule))
++)`;
++
++	if (metric === 'sub' || metric === 'pub') {
++		return `${common}
++SELECT count(*)
++FROM candidates candidate
++WHERE candidate.host NOT IN (SELECT host FROM blocked_candidates)
++	AND candidate.host NOT IN (
++		SELECT instance.host
++		FROM instance
++		WHERE instance."suspensionState" != 'none'
++	)`;
++	}
++
++	if (metric === 'pubsub') {
++		return `${common}
++SELECT count(*)
++FROM candidates candidate
++WHERE candidate.host NOT IN (SELECT host FROM blocked_candidates)
++	AND candidate.host NOT IN (
++		SELECT instance.host
++		FROM instance
++		WHERE instance."suspensionState" != 'none'
++	)
++	AND candidate.host IN (
++		SELECT following."followerHost"
++		FROM following
++		WHERE following."followerHost" IS NOT NULL
++	)`;
++	}
++
++	return `${common}
++SELECT count(instance.id)
++FROM instance
++WHERE instance.host IN (SELECT host FROM candidates)
++	AND instance.host NOT IN (SELECT host FROM blocked_candidates)
++	AND instance."suspensionState" = 'none'
++	AND instance."isNotResponding" = false`;
++}
+diff --git a/packages/backend/src/core/chart/charts/federation.ts b/packages/backend/src/core/chart/charts/federation.ts
+index b7a7f640b8..afe2b1f925 100644
+--- a/packages/backend/src/core/chart/charts/federation.ts
++++ b/packages/backend/src/core/chart/charts/federation.ts
+@@ -6,12 +6,13 @@
+ import { Injectable, Inject } from '@nestjs/common';
+ import { DataSource } from 'typeorm';
+ import * as Redis from 'ioredis';
+-import type { FollowingsRepository, InstancesRepository, MiMeta } from '@/models/_.js';
++import type { MiMeta } from '@/models/_.js';
+ import { DI } from '@/di-symbols.js';
+ import { bindThis } from '@/decorators.js';
+ import { acquireChartInsertLock } from '@/misc/distributed-lock.js';
+ import Chart from '../core.js';
+ import { ChartLoggerService } from '../ChartLoggerService.js';
++import { buildFederationChartMetricQuery, type FederationChartMetric } from './federation-blocked-host-query.js';
+ import { name, schema } from './entities/federation.js';
+ import type { KVs } from '../core.js';
+ 
+@@ -30,12 +31,6 @@ export default class FederationChart extends Chart<typeof schema> { // eslint-di
+ 		@Inject(DI.redis)
+ 		private redisClient: Redis.Redis,
+ 
+-		@Inject(DI.followingsRepository)
+-		private followingsRepository: FollowingsRepository,
+-
+-		@Inject(DI.instancesRepository)
+-		private instancesRepository: InstancesRepository,
+-
+ 		private chartLoggerService: ChartLoggerService,
+ 	) {
+ 		super(db, (k) => acquireChartInsertLock(redisClient, k), chartLoggerService.logger, name, schema);
+@@ -47,62 +42,12 @@ export default class FederationChart extends Chart<typeof schema> { // eslint-di
+ 	}
+ 
+ 	protected async tickMinor(): Promise<Partial<KVs<typeof schema>>> {
+-		const suspendedInstancesQuery = this.instancesRepository.createQueryBuilder('instance')
+-			.select('instance.host')
+-			.where('instance.suspensionState != \'none\'');
+-
+-		const pubsubSubQuery = this.followingsRepository.createQueryBuilder('f')
+-			.select('f.followerHost')
+-			.where('f.followerHost IS NOT NULL');
+-
+-		const subInstancesQuery = this.followingsRepository.createQueryBuilder('f')
+-			.select('f.followeeHost')
+-			.where('f.followeeHost IS NOT NULL');
+-
+-		const pubInstancesQuery = this.followingsRepository.createQueryBuilder('f')
+-			.select('f.followerHost')
+-			.where('f.followerHost IS NOT NULL');
+-
+ 		const [sub, pub, pubsub, subActive, pubActive] = await Promise.all([
+-			this.followingsRepository.createQueryBuilder('following')
+-				.select('COUNT(DISTINCT following.followeeHost)')
+-				.where('following.followeeHost IS NOT NULL')
+-				.andWhere(this.meta.blockedHosts.length === 0 ? '1=1' : 'following.followeeHost NOT ILIKE ALL(ARRAY[:...blocked])', { blocked: this.meta.blockedHosts.flatMap(x => [x, `%.${x}`]) })
+-				.andWhere(`following.followeeHost NOT IN (${ suspendedInstancesQuery.getQuery() })`)
+-				.getRawOne()
+-				.then(x => parseInt(x.count, 10)),
+-			this.followingsRepository.createQueryBuilder('following')
+-				.select('COUNT(DISTINCT following.followerHost)')
+-				.where('following.followerHost IS NOT NULL')
+-				.andWhere(this.meta.blockedHosts.length === 0 ? '1=1' : 'following.followerHost NOT ILIKE ALL(ARRAY[:...blocked])', { blocked: this.meta.blockedHosts.flatMap(x => [x, `%.${x}`]) })
+-				.andWhere(`following.followerHost NOT IN (${ suspendedInstancesQuery.getQuery() })`)
+-				.getRawOne()
+-				.then(x => parseInt(x.count, 10)),
+-			this.followingsRepository.createQueryBuilder('following')
+-				.select('COUNT(DISTINCT following.followeeHost)')
+-				.where('following.followeeHost IS NOT NULL')
+-				.andWhere(this.meta.blockedHosts.length === 0 ? '1=1' : 'following.followeeHost NOT ILIKE ALL(ARRAY[:...blocked])', { blocked: this.meta.blockedHosts.flatMap(x => [x, `%.${x}`]) })
+-				.andWhere(`following.followeeHost NOT IN (${ suspendedInstancesQuery.getQuery() })`)
+-				.andWhere(`following.followeeHost IN (${ pubsubSubQuery.getQuery() })`)
+-				.setParameters(pubsubSubQuery.getParameters())
+-				.getRawOne()
+-				.then(x => parseInt(x.count, 10)),
+-			this.instancesRepository.createQueryBuilder('instance')
+-				.select('COUNT(instance.id)')
+-				.where(`instance.host IN (${ subInstancesQuery.getQuery() })`)
+-				.andWhere(this.meta.blockedHosts.length === 0 ? '1=1' : 'instance.host NOT ILIKE ALL(ARRAY[:...blocked])', { blocked: this.meta.blockedHosts.flatMap(x => [x, `%.${x}`]) })
+-				.andWhere('instance.suspensionState = \'none\'')
+-				.andWhere('instance.isNotResponding = false')
+-				.getRawOne()
+-				.then(x => parseInt(x.count, 10)),
+-			this.instancesRepository.createQueryBuilder('instance')
+-				.select('COUNT(instance.id)')
+-				.where(`instance.host IN (${ pubInstancesQuery.getQuery() })`)
+-				.andWhere(this.meta.blockedHosts.length === 0 ? '1=1' : 'instance.host NOT ILIKE ALL(ARRAY[:...blocked])', { blocked: this.meta.blockedHosts.flatMap(x => [x, `%.${x}`]) })
+-				.andWhere('instance.suspensionState = \'none\'')
+-				.andWhere('instance.isNotResponding = false')
+-				.getRawOne()
+-				.then(x => parseInt(x.count, 10)),
++			this.countMetric('sub'),
++			this.countMetric('pub'),
++			this.countMetric('pubsub'),
++			this.countMetric('subActive'),
++			this.countMetric('pubActive'),
+ 		]);
+ 
+ 		return {
+@@ -114,6 +59,15 @@ export default class FederationChart extends Chart<typeof schema> { // eslint-di
+ 		};
+ 	}
+ 
++	private async countMetric(metric: FederationChartMetric): Promise<number> {
++		const result = await this.db.query<Array<{ count: string }>>(
++			buildFederationChartMetricQuery(metric),
++			[this.meta.blockedHosts],
++		);
++
++		return parseInt(result[0].count, 10);
++	}
++
+ 	@bindThis
+ 	public async deliverd(host: string, succeeded: boolean): Promise<void> {
+ 		await this.commit(succeeded ? {

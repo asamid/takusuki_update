@@ -1,0 +1,3 @@
+# Exact, hash-verified release inputs. Whitespace is part of these payloads.
+bundle/**/*.patch -whitespace
+bundle/**/patch-manifest.tsv -whitespace
