@@ -24,11 +24,13 @@ Takusuki独自helperに適用し、以下のthird-party由来部分には各ラ�
 Takusuki updaterは同projectの運用フローから影響・着想を受けています。MIT noticeはroot
 [`LICENSE`](LICENSE)に保持しています。
 
-## unknown.png
+## Takusuki original asset
 
-`bundle/takusuki-update3-bundle/assets/unknown.png`とlegacy copyは既存repository履歴に存在し、
-bundle内のfileはそのbyte-identical copyです。しかし、履歴だけでは作者・権利保有・再配布条件を
-確定できません。
+- Files:
+  - `bundle/takusuki-update3-bundle/assets/unknown.png`
+  - `legacy/assets/unknown.png`
+- Copyright: Copyright (c) 2025-2026 asami
+- License: MIT
 
-- License: **UNKNOWN / clarification required**
-- GitHub Releaseや第三者による再配布前に権利関係を確認してください。
+`unknown.png`はasamiが制作したTakusuki original assetです。authorshipはcopyright holder本人により
+2026-08-16に確認されました。root [`LICENSE`](LICENSE)のMIT条件を適用します。

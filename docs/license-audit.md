@@ -10,19 +10,20 @@ Audit date: 2026-08-16
 | `bundle/**/001-max-note-text-length.patch` | AGPL-3.0-only | Misskey-derived source patch |
 | `bundle/**/010-exp003-federation-chart-blocked-host.patch` | AGPL-3.0-only | Misskey-derived source patch |
 | `legacy/patches/maxnote5000.patch` | AGPL-3.0-only | Legacy Misskey-derived source patch |
-| `bundle/**/assets/unknown.png` | UNKNOWN / clarification required | Existing history does not establish authorship or redistribution terms |
-| `legacy/assets/unknown.png` | UNKNOWN / clarification required | Same byte-identical asset and unresolved provenance |
+| `bundle/**/assets/unknown.png` | MIT | Original work created by asami; authorship confirmed by the copyright holder on 2026-08-16 |
+| `legacy/assets/unknown.png` | MIT | Original work created by asami; authorship confirmed by the copyright holder on 2026-08-16 |
 | `LICENSES/AGPL-3.0-only.txt` | AGPL-3.0-only license text | GNU Affero GPL v3 official text |
 | Documentation | MIT | Takusuki project documentation; root `LICENSE` |
 
 ## License boundary result
 
-**PASS with disclosed UNKNOWN asset status.** Repository全体をMIT-onlyとは表現していません。
+**PASS.** Repository全体をMIT-onlyとは表現していません。
 Misskey由来patchにはAGPL-3.0-onlyを明示し、joinmisskey/bash-installのMIT noticeを保持しました。
 
 `unknown.png`はSHA-256
-`ac918e92451687bac2c17a139eb2528fd450c2b4dfcc169caae7442d88889c0f`のexact assetですが、
-repository historyから権利保有者やlicenseを確定できません。確認完了まではUNKNOWNです。
+`ac918e92451687bac2c17a139eb2528fd450c2b4dfcc169caae7442d88889c0f`のexact assetです。
+copyright holder本人により2026-08-16にasamiのoriginal workであることが確認されました。
+root `LICENSE`のMIT条件とCopyright (c) 2025-2026 asamiを適用します。
 
 ## Operational metadata
 

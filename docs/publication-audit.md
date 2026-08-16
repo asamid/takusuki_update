@@ -48,6 +48,6 @@ token、internal hostname、実環境config/log/backupは含まれない。
 
 ## License audit
 
-結果は[`license-audit.md`](license-audit.md)を参照。updater/helperはMIT、Misskey-derived
-patchはAGPL-3.0-only。`unknown.png`は権利根拠を確定できないため
-`UNKNOWN / clarification required`として公開時に明示している。
+**PASS.** 結果は[`license-audit.md`](license-audit.md)を参照。updater/helperとTakusuki
+original `unknown.png`はMIT、Misskey-derived patchはAGPL-3.0-only。`unknown.png`は
+copyright holder本人により2026-08-16にasamiのoriginal workであることが確認済みである。

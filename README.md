@@ -118,7 +118,7 @@ repository全体がMIT-onlyではありません。
 
 - Takusuki updaterとhelper scripts: [MIT](LICENSE)
 - Misskey由来patch: [AGPL-3.0-only](LICENSES/AGPL-3.0-only.txt)
-- `unknown.png`: `UNKNOWN / clarification required`
+- Takusuki original `unknown.png`: MIT — Copyright (c) 2025-2026 asami
 
 詳細は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)と
 [license audit](docs/license-audit.md)を参照してください。
