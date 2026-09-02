@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Gallery create/updateの1投稿あたりfile上限を32から256へ拡張するpatchを追加
+
 ## 4.0.0 - 2026-08-16
 
 - 日本語の対話UI

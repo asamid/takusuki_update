@@ -11,9 +11,11 @@ Takusuki独自helperに適用し、以下のthird-party由来部分には各ラ�
 - Applicable files:
   - `bundle/takusuki-update3-bundle/misskey-patches/001-max-note-text-length.patch`
   - `bundle/takusuki-update3-bundle/misskey-patches/010-exp003-federation-chart-blocked-host.patch`
+  - `bundle/takusuki-update3-bundle/misskey-patches/020-gallery-file-limit-256.patch`
 
-これらはMisskey sourceへ適用する差分であり、patchのbyte列はLive Staging検証済みbundleから
-変更せず取り込んでいます。
+これらはMisskey sourceへ適用する差分です。020を含むcandidateのbyte列は、機能検証と
+deterministic rebuild後、2026-09-03の運用者waiverによりGit release sourceとして固定しました。
+この判断はStaging isolation FAILをPASSへ変更するものではありません。
 
 ## joinmisskey/bash-install
 

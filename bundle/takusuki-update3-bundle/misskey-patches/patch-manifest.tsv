@@ -1,3 +1,4 @@
 ID	filename	description	required	introduced_for	upstream_status	sha256	added_paths
 001	001-max-note-text-length.patch	Set MAX_NOTE_TEXT_LENGTH to 5000	required	takusuki	local	981b736023ee3f9c55d30a2bd595c0f557d913840debf14e987db6d8ddbb81e8	
 010	010-exp003-federation-chart-blocked-host.patch	Optimize FederationChart blocked-host matching	required	EXP-003	pending-upstream	2cdfdeac087811ace249f75d5dafec1636e0a8eb7a8c768f897748d89d826079	packages/backend/src/core/chart/charts/federation-blocked-host-query.ts;packages/backend/src/core/chart/charts/federation-blocked-host-query.test.ts;packages/backend/src/core/chart/charts/federation-blocked-host-query.integration.test.ts
+020	020-gallery-file-limit-256.patch	Raise Gallery fileIds maximum from 32 to 256	required	takusuki-gallery-256	local	540962dc92bdd951e73be7ac4c8091c874d53c6e9150b19698837e35234f95e4	

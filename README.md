@@ -19,6 +19,7 @@ HTTPS bundleを組み合わせます。通常updateではPostgreSQL backupを自
 - network failure時だけのverified cache fallback
 - official Misskey remote allowlistとexact commit解決
 - isolated worktreeでのpatch compatibility test
+- Gallery投稿1件あたりの添付上限を256ファイルへ拡張するTakusuki patch
 - target pnpm/Corepack version isolationとCWD非依存実行
 - service停止前preflight、bounded readiness、HTTP/API health check
 - fail-closed動作とbroad `git clean`の禁止
@@ -105,6 +106,9 @@ updater、bundle、manifest、secret patternを検証します。
 GitHubはsource、history、review、CIの正本、labo.takusuki.comはupdaterが実行時に参照する
 runtime distribution endpointです。PR merge後にGitHub Releaseを作成する場合も、Live
 Stagingで検証したexact SHAの4 artifactだけをrelease assetにします。
+
+bundleのTakusuki custom patchには、Galleryのcreate/update API双方で投稿1件あたりの
+file上限を32から256へ拡張するpatchが含まれます。DB schema変更はありません。
 
 ## Legacy
 

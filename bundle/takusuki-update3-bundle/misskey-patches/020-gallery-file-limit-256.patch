@@ -1,0 +1,24 @@
+diff --git a/packages/backend/src/server/api/endpoints/gallery/posts/create.ts b/packages/backend/src/server/api/endpoints/gallery/posts/create.ts
+--- a/packages/backend/src/server/api/endpoints/gallery/posts/create.ts
++++ b/packages/backend/src/server/api/endpoints/gallery/posts/create.ts
+@@ -36,7 +36,7 @@ export const paramDef = {
+ 	properties: {
+ 		title: { type: 'string', minLength: 1 },
+ 		description: { type: 'string', nullable: true },
+-		fileIds: { type: 'array', uniqueItems: true, minItems: 1, maxItems: 32, items: {
++		fileIds: { type: 'array', uniqueItems: true, minItems: 1, maxItems: 256, items: {
+ 			type: 'string', format: 'misskey:id',
+ 		} },
+ 		isSensitive: { type: 'boolean', default: false },
+diff --git a/packages/backend/src/server/api/endpoints/gallery/posts/update.ts b/packages/backend/src/server/api/endpoints/gallery/posts/update.ts
+--- a/packages/backend/src/server/api/endpoints/gallery/posts/update.ts
++++ b/packages/backend/src/server/api/endpoints/gallery/posts/update.ts
+@@ -36,7 +36,7 @@ export const paramDef = {
+ 		postId: { type: 'string', format: 'misskey:id' },
+ 		title: { type: 'string', minLength: 1 },
+ 		description: { type: 'string', nullable: true },
+-		fileIds: { type: 'array', uniqueItems: true, minItems: 1, maxItems: 32, items: {
++		fileIds: { type: 'array', uniqueItems: true, minItems: 1, maxItems: 256, items: {
+ 			type: 'string', format: 'misskey:id',
+ 		} },
+ 		isSensitive: { type: 'boolean', default: false },

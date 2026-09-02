@@ -1,6 +1,6 @@
 # License audit — Takusuki Update3 v4.0.0
 
-Audit date: 2026-08-16
+Audit date: 2026-09-03
 
 | Path | License | Basis |
 |---|---|---|
@@ -9,6 +9,7 @@ Audit date: 2026-08-16
 | `legacy/takusuki_update2.sh` | MIT | Existing notice; joinmisskey/bash-install MIT notice retained |
 | `bundle/**/001-max-note-text-length.patch` | AGPL-3.0-only | Misskey-derived source patch |
 | `bundle/**/010-exp003-federation-chart-blocked-host.patch` | AGPL-3.0-only | Misskey-derived source patch |
+| `bundle/**/020-gallery-file-limit-256.patch` | AGPL-3.0-only | Misskey-derived Gallery endpoint source patch |
 | `legacy/patches/maxnote5000.patch` | AGPL-3.0-only | Legacy Misskey-derived source patch |
 | `bundle/**/assets/unknown.png` | MIT | Original work created by asami; authorship confirmed by the copyright holder on 2026-08-16 |
 | `legacy/assets/unknown.png` | MIT | Original work created by asami; authorship confirmed by the copyright holder on 2026-08-16 |

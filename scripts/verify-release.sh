@@ -5,7 +5,7 @@ umask 077
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
 readonly EXPECTED_UPDATER_SHA256='a121db5ab1ef3d834f8cf3f49909318b3a6736eb3e0dc608acca7a6c71a9aa5f'
-readonly EXPECTED_BUNDLE_SHA256='be3c5a0846bd36313b5292193a8c947e6913f0d4c3ee150d34e609b3f5d0e7de'
+readonly EXPECTED_BUNDLE_SHA256='f1d69fcbdf292a42062f60d83917ad1c82504b28964d98c13711ebd4122372d5'
 BUILD_DIR=$(mktemp -d /tmp/takusuki-update3-verify.XXXXXXXX)
 trap 'rm -rf -- "$BUILD_DIR"' EXIT
 
