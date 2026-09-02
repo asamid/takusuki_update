@@ -1,9 +1,10 @@
 META	bundle_version	1
-META	generated_at	2026-08-16T00:43:09+00:00
+META	generated_at	2026-09-02T17:49:20+00:00
 META	minimum_updater_version	4.0.0
 FILE	assets/unknown.png	ac918e92451687bac2c17a139eb2528fd450c2b4dfcc169caae7442d88889c0f	875
 FILE	assets/unknown.png.sha256	395f2f979ef07ae9e28bea04a5b02f915f241dfde233285bcefc1a840d2619f5	78
 FILE	misskey-patches/001-max-note-text-length.patch	981b736023ee3f9c55d30a2bd595c0f557d913840debf14e987db6d8ddbb81e8	472
 FILE	misskey-patches/010-exp003-federation-chart-blocked-host.patch	2cdfdeac087811ace249f75d5dafec1636e0a8eb7a8c768f897748d89d826079	18707
-FILE	misskey-patches/patch-manifest.tsv	fdaf1f23c78156eee0af4498708119cfd2235ec2f34dc740f178227023d1bb99	676
-FILE	misskey-patches/series	c8cf96d14dd009c680b60200e34ad8ac735d4697fa220ae6cb7e06bbd4bda3ff	78
+FILE	misskey-patches/020-gallery-file-limit-256.patch	540962dc92bdd951e73be7ac4c8091c874d53c6e9150b19698837e35234f95e4	1475
+FILE	misskey-patches/patch-manifest.tsv	06c93051cd93411a9703b344ae310ba38d8c1a87fbce2b63d7a603d218793d80	860
+FILE	misskey-patches/series	e838d8548880406d5e94dc648c8f3784735bb6a882fcc492a26a8dd72f937b7f	111
