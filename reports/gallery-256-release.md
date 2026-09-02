@@ -1,6 +1,6 @@
 # Gallery 256 release state
 
-Status: **ACCEPTED FOR GIT RELEASE SOURCE — ISOLATION RETEST WAIVED BY OPERATOR**
+Status: **DEPLOYED TO PRODUCTION — STAGING ISOLATION RETEST WAIVED BY OPERATOR**
 
 ## Candidate
 
@@ -24,9 +24,25 @@ the Staging isolation test as PASS. The historical result remains **STAGING ISOL
 The accepted Git release source is identified by
 `ACCEPTED_BUNDLE_SHA256=f1d69fcbdf292a42062f60d83917ad1c82504b28964d98c13711ebd4122372d5`.
 
-## Scope boundary
+## Deployment timeline
 
-- `scripts/build-bundle.sh` and `scripts/verify-release.sh` pin the accepted bundle SHA.
-- Runtime distribution remains unchanged.
-- No Production preflight, service action, source change, build, migration or API mutation was
-  performed.
+1. The deterministic candidate was accepted as the Git release source under the operator waiver.
+2. PR #2 merged the exact source into `main` at
+   `d670118d4f5085fc189b59d6e36914d099b0b481`.
+3. The accepted bundle was published to the runtime distribution endpoint.
+4. The exact release was deployed to Misskey 2026.7.0 Production as a same-version update on
+   2026-09-03.
+5. Production install, build, migration, service and health validation passed with no pending
+   migration, `NRestarts=0` and 22 seconds of service downtime.
+
+## Current deployment state
+
+| Component | State |
+| --- | --- |
+| Git release source | MERGED |
+| Runtime distribution | DEPLOYED |
+| Public runtime SHA-256 | `f1d69fcbdf292a42062f60d83917ad1c82504b28964d98c13711ebd4122372d5` |
+| Production | DEPLOYED |
+| Production validation | PASS |
+
+The Production success does not alter the historical **STAGING ISOLATION: FAIL** result.

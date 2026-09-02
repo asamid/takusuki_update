@@ -73,10 +73,11 @@ Object deletion ran through the `objectStorage` queue. The six failed job IDs we
 `235741`-`237284` jobs; the new cleanup jobs completed in the `277990`-`278019` range with no
 new failure observed.
 
-Therefore `STAGING ISOLATION` and `PRODUCTION ACCESS DELTA` are FAIL. The candidate must not be
-declared `VALIDATED_BUNDLE_SHA256`, and expected SHA, GitHub, runtime distribution and Production
-steps remain forbidden. A new Staging run requires a dedicated non-Production object-storage
-endpoint/bucket (or verified local internal storage) and an enforceable Production network guard.
+Therefore `STAGING ISOLATION` and `PRODUCTION ACCESS DELTA` are FAIL. At the time of this
+validation, the candidate could not be declared `VALIDATED_BUNDLE_SHA256`, and expected SHA,
+GitHub, runtime distribution and Production steps remained forbidden. A new Staging run would
+require a dedicated non-Production object-storage endpoint/bucket (or verified local internal
+storage) and an enforceable Production network guard.
 
 ## Rollback readiness
 
@@ -85,3 +86,8 @@ The updater created complete history at
 001/010, the current series is 001/010/020, and pre/post migration ledgers are identical.
 Source rollback is therefore eligible. No rollback rehearsal was performed after the isolation
 failure; Staging currently remains on 001/010/020 for investigation.
+
+## Subsequent status
+
+The exact accepted artifact was subsequently deployed to Production on 2026-09-03 and passed
+Production validation. This does not alter the historical **STAGING ISOLATION: FAIL** result.

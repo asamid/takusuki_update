@@ -8,7 +8,9 @@ Observed: 2026-09-03 JST
 - Repository baseline: `asamid/takusuki_update` main commit `522f203e6fb3ba22016a53658e29f4a54c5c0a0a`.
 - Working branch: `feature/gallery-limit-256`.
 - Public Production NodeInfo reports Misskey `2026.7.0`.
-- Exact Production Git commit, working tree, migration ledger, service state and configuration hashes are UNKNOWN because the configured Production READ-ONLY SSH authentication failed.
+- At the time of this investigation, the exact Production Git commit, working tree, migration
+  ledger, service state and configuration hashes were UNKNOWN because the configured Production
+  READ-ONLY SSH authentication failed.
 - Staging `192.168.100.62` became reachable on TCP/22 and accepted the configured
   `takusuki-staging` Ed25519 identity.
 - Staging is a Production-data clone whose effective database `meta` settings enable object
@@ -46,3 +48,12 @@ It is registered as a required AGPL-3.0-only Misskey-derived patch after 001 and
 The exact candidate subsequently passed Staging build and create/update API boundary tests, but
 the release gate failed because the Staging test accessed the shared Production object-storage
 endpoint. See `reports/gallery-256-staging-validation.md`.
+
+## Outcome
+
+- Implemented as managed patch `020-gallery-file-limit-256.patch`.
+- Merged through PR #2 at `d670118d4f5085fc189b59d6e36914d099b0b481`.
+- Deployed to Misskey 2026.7.0 Production on 2026-09-03.
+- Production validation: PASS.
+
+These later outcomes do not revise the isolation failure recorded during the Staging investigation.
