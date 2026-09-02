@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## Runtime bundle update — 2026-09-03
 
-- Gallery create/updateの1投稿あたりfile上限を32から256へ拡張するpatchを追加
+- Gallery create/updateの1投稿あたりfile上限を32から256へ拡張
+- `020-gallery-file-limit-256.patch`をmanaged patch seriesへ追加
+- deterministic bundle SHA-256:
+  `f1d69fcbdf292a42062f60d83917ad1c82504b28964d98c13711ebd4122372d5`
+- Misskey 2026.7.0 Productionへsame-version deployment
+- install、build、migration、service、health: PASS
+- DB migrationなし、pending migration 0
 
 ## 4.0.0 - 2026-08-16
 
