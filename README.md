@@ -10,12 +10,13 @@ Ubuntu上の通常インストールを対象とし、Docker版Misskeyには対�
 
 ## Current Production Status
 
-- Misskey: `2026.7.0`
+- Misskey: `2026.9.0`
 - Updater: `Takusuki Update v4.0.0`
 - Production deployment: `PASS`
 - Last Gallery patch deployment: `2026-09-03`
 - Gallery files per post: `256`
-- Current managed patch series: `001 / 010 / 020`
+- Production patch series: `001 / 010 / 020`
+- Staging candidate patch: `030` (not deployed)
 
 Gallery 256はMisskeyのversionを変更しないsame-version deploymentとしてProductionへ
 適用され、install、build、migration、service、healthの検証を通過しました。DB migrationは
@@ -45,11 +46,19 @@ Gallery 256はMisskeyのversionを変更しないsame-version deploymentとし�
 | 001 | `001-max-note-text-length.patch` | ノート文字数上限を5000へ変更 | Applied |
 | 010 | `010-exp003-federation-chart-blocked-host.patch` | FederationChart blocked-host照合を高速化 | Applied |
 | 020 | `020-gallery-file-limit-256.patch` | Gallery添付上限を32から256へ拡張 | Applied |
+| 030 | `030-note-blocked-host-query-optimization.patch` | Note検索/TLのblocked-host照合を高速化 | Candidate—未反映 |
 
 適用順序と各patchのSHA-256は
 [`series`](bundle/takusuki-update3-bundle/misskey-patches/series)および
 [`patch-manifest.tsv`](bundle/takusuki-update3-bundle/misskey-patches/patch-manifest.tsv)
 で管理します。
+
+030は3,471件のblocked hostを約20,800個のSQL bindへ展開する処理を、literal domainの
+DNS suffix等値照合とwildcard rule専用ILIKEへ置き換えます。DB schema変更はありません。
+隔離した合成Stagingでは結果集合差分0、Misskey 2026.9.0/2026.10.0へのpatch適用がPASS
+しています。詳細は
+[Note blocked-host optimization report](reports/note-blocked-host-optimization.md)を参照して
+ください。Production反映には別途承認が必要です。
 
 ## Gallery 256
 

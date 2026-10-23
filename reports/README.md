@@ -1,4 +1,11 @@
-# Gallery 256 reports
+# Takusuki Update reports
+
+## Note blocked-host performance
+
+- [Note blocked-host query optimization candidate](note-blocked-host-optimization.md): root cause,
+  candidate 030 design, isolated benchmark, compatibility and remaining Production gate.
+
+## Gallery 256
 
 These reports preserve the Gallery 256 investigation and release history in chronological order.
 

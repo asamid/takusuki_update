@@ -21,6 +21,7 @@ bundle/
         ├── 001-max-note-text-length.patch
         ├── 010-exp003-federation-chart-blocked-host.patch
         ├── 020-gallery-file-limit-256.patch
+        ├── 030-note-blocked-host-query-optimization.patch
         ├── patch-manifest.tsv
         └── series
 ```
@@ -32,6 +33,8 @@ bundle/
   blocked-host matchingの性能を改善
 - `020-gallery-file-limit-256.patch`: Gallery create/update APIの`fileIds`上限を
   32から256へ拡張
+- `030-note-blocked-host-query-optimization.patch`: Note検索/TLでblocked hostを
+  DNS suffix等値照合し、巨大なspread parameter SQLを回避
 
 020は次の双方を変更します。
 
@@ -43,11 +46,19 @@ same-version deploymentとして適用済みです。
 
 ## Release identity
 
-Accepted bundle SHA-256:
+Production accepted bundle SHA-256:
 
 ```text
 f1d69fcbdf292a42062f60d83917ad1c82504b28964d98c13711ebd4122372d5
 ```
+
+030を含むcandidate bundle SHA-256:
+
+```text
+63915baca799a8f87cffd4819d0c848b49822d36c0d38c8f7e6adcec0927c3b5
+```
+
+Production未反映です。
 
 ## Build and validation
 

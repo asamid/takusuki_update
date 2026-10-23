@@ -5,7 +5,7 @@ umask 022
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
 readonly SOURCE="$ROOT/bundle/takusuki-update3-bundle"
-readonly EXPECTED_SHA256='f1d69fcbdf292a42062f60d83917ad1c82504b28964d98c13711ebd4122372d5'
+readonly EXPECTED_SHA256='63915baca799a8f87cffd4819d0c848b49822d36c0d38c8f7e6adcec0927c3b5'
 readonly OUTPUT_DIR="${1:-$ROOT/dist}"
 
 [[ -d "$SOURCE" ]] || { printf 'Missing bundle source: %s\n' "$SOURCE" >&2; exit 1; }
