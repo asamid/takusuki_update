@@ -3,7 +3,8 @@
 ## Note blocked-host performance
 
 - [Note blocked-host query optimization candidate](note-blocked-host-optimization.md): root cause,
-  candidate 030 design, isolated benchmark, compatibility and remaining Production gate.
+  candidate 030 design, Misskey 2026.10.0 PGroonga API validation, compatibility and remaining
+  Production gate.
 
 ## Gallery 256
 
