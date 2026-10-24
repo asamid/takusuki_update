@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Purpose: Interactive and non-interactive, reproducible, fail-closed Misskey operations.
 # Author: asami / Takusuki operations (implementation prepared with Codex)
-# Version: 4.1.0
-# Changelog: v4 adds interactive UI, verified self-downloaded bundles, independent
-# DB backups, migration-aware rollback history, and cwd-independent user switching.
+# Version: 5.0.0
+# Changelog: v5 removes the per-version bundle gate, adds Vanilla tag updates,
+# and records target compatibility separately from bundle integrity.
 # Safety design: preflight and patch checks run before downtime; required failures stop the update.
 # Patch/asset source: verified bundle downloaded from labo.takusuki.com.
 # Expected environment: systemd deployment, official misskey-dev/misskey Git remote, Node/Corepack/pnpm.
@@ -11,12 +11,12 @@
 set -Eeuo pipefail
 umask 077
 
-readonly UPDATE3_VERSION='4.1.0'
-readonly BUNDLE_FORMAT_VERSION='1'
-readonly DEFAULT_BUNDLE_URL='https://labo.takusuki.com/update3/takusuki-update3-bundle.zip'
-readonly DEFAULT_BUNDLE_SHA_URL='https://labo.takusuki.com/update3/takusuki-update3-bundle.zip.sha256'
+readonly UPDATER_VERSION='5.0.0'
+readonly DEFAULT_BUNDLE_URL='https://labo.takusuki.com/update3/takusuki-update5-bundle.zip'
+readonly DEFAULT_BUNDLE_SHA_URL='https://labo.takusuki.com/update3/takusuki-update5-bundle.zip.sha256'
 
 MODE=''
+UPDATE_FLAVOR='patched'
 TARGET_VALUE=''
 CHECK_ONLY=0
 PATCH_ONLY=0
@@ -44,22 +44,42 @@ UPDATE_STARTED_EPOCH=''
 SERVICE_STOP_EPOCH=''
 SERVICE_START_EPOCH=''
 BUNDLE_RELEASE_ID=''
-BUNDLE_TARGET_VERSION=''
-BUNDLE_TARGET_COMMIT=''
+BUNDLE_FORMAT_VERSION=''
+BUNDLE_REFERENCE_VERSION=''
+BUNDLE_REFERENCE_COMMIT=''
+TARGET_COMPATIBILITY_STATUS=''
 SOURCE_PATCH_COUNT=''
 SOURCE_STATE=''
+
+# Values supplied by the invoking administrator take precedence over legacy
+# environment files. This is required for isolated Staging instances that must
+# not inherit the live service/source paths from /root/.misskey.env.
+declare -A CALLER_ENV_OVERRIDES=()
+for _env_name in MISSKEY_USER MISSKEY_DIR SERVICE_NAME LOG_DIR STATE_DIR BUNDLE_CACHE_DIR \
+	DB_BACKUP_DIR BUNDLE_URL BUNDLE_SHA_URL MIN_FREE_KB REQUIRE_ENV_FILE \
+	HEALTH_LOCAL_URL HEALTH_API_URL HEALTH_LAN_URL HEALTH_PUBLIC_URL POSTGRESQL_CONF \
+	READINESS_ATTEMPTS READINESS_INTERVAL_SECONDS; do
+	if [[ -v $_env_name ]]; then CALLER_ENV_OVERRIDES["$_env_name"]=${!_env_name}; fi
+done
+unset _env_name
+
+restore_caller_env_overrides() {
+	local name
+	for name in "${!CALLER_ENV_OVERRIDES[@]}"; do printf -v "$name" '%s' "${CALLER_ENV_OVERRIDES[$name]}"; done
+}
 
 usage() {
 	cat <<'USAGE'
 Usage:
-  takusuki_update3.sh                         Interactive menu (root)
-  takusuki_update3.sh --stable [--check|--check-patches]
-  takusuki_update3.sh --tag VERSION [--check|--check-patches]
-  takusuki_update3.sh --master-reset [--check|--check-patches]
-  takusuki_update3.sh --branch BRANCH --advanced [--check|--check-patches]
-  takusuki_update3.sh --commit SHA1 --advanced [--check|--check-patches]
-  takusuki_update3.sh --rollback [--rollback-id HISTORY_ID] [--yes]
-  takusuki_update3.sh --db-backup [--yes]
+  takusuki_update5.sh                         Interactive menu (root)
+  takusuki_update5.sh --stable [--check|--check-patches]
+  takusuki_update5.sh --tag VERSION [--check|--check-patches]
+  takusuki_update5.sh --vanilla --tag VERSION [--check]
+  takusuki_update5.sh --master-reset [--check|--check-patches]
+  takusuki_update5.sh --branch BRANCH --advanced [--check|--check-patches]
+  takusuki_update5.sh --commit SHA1 --advanced [--check|--check-patches]
+  takusuki_update5.sh --rollback [--rollback-id HISTORY_ID] [--yes]
+  takusuki_update5.sh --db-backup [--yes]
 
 Actual non-interactive operations require --yes and root. DB backup is optional
 and independent; normal updates never start pg_dump.
@@ -67,13 +87,14 @@ and independent; normal updates never start pg_dump.
 Options:
   --stable             Latest stable YYYY.N.N release tag (default)
   --tag VERSION        Exact official stable release tag
+  --vanilla            Install the exact official tag without Takusuki patches/assets
   --master-reset       Exact fetched origin/master (development code warning)
   --branch BRANCH      Official remote branch (advanced mode only)
   --commit SHA1        Exact official commit reachable from a fetched official ref
   --advanced           Permit branch and commit modes
   --check              Full read-only/preflight check; no stop/apply/build/migrate
   --check-patches      Resolve target and test the complete patch series only
-  --rollback           List/select a safe v4 update history and roll it back
+  --rollback           List/select a safe v4/v5 update history and roll it back
   --rollback-id ID     Select one history directory basename
   --db-backup          Create and validate a PostgreSQL custom-format backup
   --db-name NAME       Advanced DB-backup-only database override (test/staging)
@@ -157,6 +178,10 @@ while (($# > 0)); do
 			TARGET_VALUE=$2
 			shift 2
 			;;
+		--vanilla)
+			UPDATE_FLAVOR='vanilla'
+			shift
+			;;
 		--master-reset)
 			MODE='master'
 			TARGET_VALUE='master'
@@ -238,6 +263,8 @@ while (($# > 0)); do
 done
 
 [[ -n "$MODE" ]] || fail 'one operation mode is required; use --help'
+[[ "$UPDATE_FLAVOR" != 'vanilla' || "$MODE" == 'tag' ]] || fail '--vanilla requires --tag VERSION'
+[[ "$UPDATE_FLAVOR" != 'vanilla' || "$PATCH_ONLY" == 0 ]] || fail '--check-patches does not apply to Vanilla mode; use --check'
 
 [[ "$MODE" != 'branch' || "$ADVANCED" == 1 ]] || fail '--branch requires --advanced'
 [[ "$MODE" != 'commit' || "$ADVANCED" == 1 ]] || fail '--commit requires --advanced'
@@ -266,6 +293,7 @@ if [[ -r /root/.misskey.env ]]; then
 	# shellcheck disable=SC1091
 	source /root/.misskey.env
 fi
+restore_caller_env_overrides
 
 choose_detected_value() {
 	local label=$1
@@ -353,6 +381,7 @@ if [[ -r "$USER_ENV_FILE" ]]; then
 	# shellcheck disable=SC1090
 	source "$USER_ENV_FILE"
 fi
+restore_caller_env_overrides
 
 SERVICE_NAME=${SERVICE_NAME:-${host:-}}
 [[ -n "$SERVICE_NAME" ]] || SERVICE_NAME=$(detect_service_name)
@@ -368,6 +397,14 @@ HEALTH_LOCAL_URL=${HEALTH_LOCAL_URL:-http://127.0.0.1:3000/}
 HEALTH_API_URL=${HEALTH_API_URL:-http://127.0.0.1:3000/api/meta}
 HEALTH_LAN_URL=${HEALTH_LAN_URL:-}
 HEALTH_PUBLIC_URL=${HEALTH_PUBLIC_URL:-}
+READINESS_ATTEMPTS=${READINESS_ATTEMPTS:-30}
+READINESS_INTERVAL_SECONDS=${READINESS_INTERVAL_SECONDS:-2}
+if [[ ! "$READINESS_ATTEMPTS" =~ ^[0-9]+$ ]] || (( READINESS_ATTEMPTS < 1 || READINESS_ATTEMPTS > 300 )); then
+	fail 'READINESS_ATTEMPTS must be an integer from 1 to 300'
+fi
+if [[ ! "$READINESS_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || (( READINESS_INTERVAL_SECONDS < 1 || READINESS_INTERVAL_SECONDS > 10 )); then
+	fail 'READINESS_INTERVAL_SECONDS must be an integer from 1 to 10'
+fi
 
 if (( CHECK_ONLY == 0 && EUID != 0 )); then
 	fail 'actual update requires root; use --check for an unprivileged preflight'
@@ -400,7 +437,7 @@ init_colors() {
 
 ui_header() {
 	printf '%s============================================================%s\n' "$C_BLUE" "$C_RESET"
-	printf '%s Takusuki Misskey Updater v%s%s\n' "$C_CYAN" "$UPDATE3_VERSION" "$C_RESET"
+	printf '%s Takusuki Misskey Updater v%s%s\n' "$C_CYAN" "$UPDATER_VERSION" "$C_RESET"
 	printf '%s============================================================%s\n' "$C_BLUE" "$C_RESET"
 }
 
@@ -417,8 +454,8 @@ interactive_menu() {
 	while true; do
 		ui_header
 		printf '\n現在のMisskey:\n  Version : %s\n  Commit  : %s\n  Service : %s\n\n' "$version" "$commit" "$service"
-		printf '1. 最新版へアップデート\n2. タグから選んでアップデート\n3. master へ強制リセット\n4. ロールバック\n5. DBをバックアップ\n0. 終了\n\n'
-		read -r -p '番号で選んでください [0-5]: ' choice
+		printf '1. 最新版へアップデート（4パッチ）\n2. タグから選んでアップデート（4パッチ）\n3. master へ強制リセット（4パッチ）\n4. ロールバック\n5. DBをバックアップ\n6. タグから選んでVANILLA更新（パッチなし）\n0. 終了\n\n'
+		read -r -p '番号で選んでください [0-6]: ' choice
 		case "$choice" in
 			0) printf '終了します。\n'; exit 0 ;;
 			1) MODE='stable'; return ;;
@@ -426,6 +463,7 @@ interactive_menu() {
 			3) MODE='master'; return ;;
 			4) MODE='rollback'; return ;;
 			5) MODE='db-backup'; return ;;
+			6) MODE='tag-select'; UPDATE_FLAVOR='vanilla'; return ;;
 			*) printf '%s無効な選択です。%s\n\n' "$C_RED" "$C_RESET" ;;
 		esac
 	done
@@ -461,6 +499,7 @@ if destination.exists():
     shutil.rmtree(destination)
 destination.mkdir(mode=0o700, parents=True)
 seen = set()
+roots = set()
 with zipfile.ZipFile(archive) as source:
     infos = source.infolist()
     if not infos:
@@ -470,8 +509,9 @@ with zipfile.ZipFile(archive) as source:
         pure = pathlib.PurePosixPath(name)
         if '\\' in name or not name or pure.is_absolute() or '..' in pure.parts or '\x00' in name:
             raise SystemExit(f'unsafe ZIP path: {name!r}')
-        if not pure.parts or pure.parts[0] != 'takusuki-update3-bundle':
+        if not pure.parts or pure.parts[0] not in {'takusuki-update3-bundle', 'takusuki-update5-bundle'}:
             raise SystemExit(f'unexpected ZIP root: {name!r}')
+        roots.add(pure.parts[0])
         if name in seen:
             raise SystemExit(f'duplicate ZIP path: {name!r}')
         seen.add(name)
@@ -488,13 +528,16 @@ with zipfile.ZipFile(archive) as source:
             with source.open(info) as incoming, open(target, 'xb') as outgoing:
                 shutil.copyfileobj(incoming, outgoing)
             target.chmod(0o600)
+if len(roots) != 1:
+    raise SystemExit(f'ZIP must contain exactly one supported root: {sorted(roots)}')
 PY
 }
 
 verify_bundle_manifest() {
 	local root=$1 manifest="$1/bundle-manifest.tsv"
 	[[ -f "$manifest" && ! -L "$manifest" ]] || fail 'bundle-manifest.tsv missing or unsafe'
-	local kind key value size extra bundle_version='' minimum_version='' release_id='' target_version='' target_commit=''
+	local kind key value size extra bundle_version='' minimum_version='' release_id=''
+	local reference_version='' reference_commit='' legacy_target_version='' legacy_target_commit=''
 	declare -A expected_sha expected_size
 	while IFS=$'\t' read -r kind key value size extra; do
 		[[ -n "$kind" ]] || continue
@@ -506,8 +549,10 @@ verify_bundle_manifest() {
 					bundle_version) bundle_version=$value ;;
 					minimum_updater_version) minimum_version=$value ;;
 					release_id) release_id=$value ;;
-					target_misskey_version) target_version=$value ;;
-					target_official_commit) target_commit=$value ;;
+					target_misskey_version) legacy_target_version=$value ;;
+					target_official_commit) legacy_target_commit=$value ;;
+					compatibility_reference_version) reference_version=$value ;;
+					compatibility_reference_commit) reference_commit=$value ;;
 					generated_at) : ;;
 					*) fail "unknown bundle META key: $key" ;;
 				esac
@@ -523,15 +568,23 @@ verify_bundle_manifest() {
 			*) fail "unknown bundle manifest row: $kind" ;;
 		esac
 	done < "$manifest"
-	[[ "$bundle_version" == "$BUNDLE_FORMAT_VERSION" ]] || fail "unsupported bundle version: $bundle_version"
+	[[ "$bundle_version" == '1' || "$bundle_version" == '2' ]] || fail "unsupported bundle version: $bundle_version"
 	[[ -n "$minimum_version" ]] || fail 'bundle minimum updater version missing'
-	[[ "$(printf '%s\n%s\n' "$minimum_version" "$UPDATE3_VERSION" | sort -V | head -n 1)" == "$minimum_version" ]] || fail "bundle requires updater $minimum_version"
+	[[ "$(printf '%s\n%s\n' "$minimum_version" "$UPDATER_VERSION" | sort -V | head -n 1)" == "$minimum_version" ]] || fail "bundle requires updater $minimum_version"
 	[[ "$release_id" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'bundle release ID is missing or invalid'
-	[[ "$target_version" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]] || fail 'bundle target Misskey version is missing or invalid'
-	[[ "$target_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'bundle target official commit is missing or invalid'
+	if [[ "$bundle_version" == '1' ]]; then
+		[[ -z "$reference_version" && -z "$reference_commit" ]] || fail 'format 1 bundle contains format 2 reference metadata'
+		reference_version=$legacy_target_version
+		reference_commit=$legacy_target_commit
+	else
+		[[ -z "$legacy_target_version" && -z "$legacy_target_commit" ]] || fail 'format 2 bundle contains legacy target metadata'
+	fi
+	[[ "$reference_version" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]] || fail 'bundle compatibility reference version is missing or invalid'
+	[[ "$reference_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'bundle compatibility reference commit is missing or invalid'
 	BUNDLE_RELEASE_ID=$release_id
-	BUNDLE_TARGET_VERSION=$target_version
-	BUNDLE_TARGET_COMMIT=$target_commit
+	BUNDLE_FORMAT_VERSION=$bundle_version
+	BUNDLE_REFERENCE_VERSION=$reference_version
+	BUNDLE_REFERENCE_COMMIT=$reference_commit
 	((${#expected_sha[@]} > 0)) || fail 'bundle manifest contains no files'
 	local path relative actual_sha actual_size
 	while IFS= read -r -d '' path; do
@@ -548,8 +601,8 @@ verify_bundle_manifest() {
 		[[ "$actual_sha" == "${expected_sha[$relative]}" ]] || fail "bundle file SHA-256 mismatch: $relative"
 		[[ "$actual_size" == "${expected_size[$relative]}" ]] || fail "bundle file size mismatch: $relative"
 	done
-	printf '[OK] Bundle manifest: format=%s release=%s target=%s@%s files=%d\n' \
-		"$bundle_version" "$release_id" "$target_version" "$target_commit" "${#expected_sha[@]}"
+	printf '[OK] Bundle manifest: format=%s release=%s reference=%s@%s files=%d\n' \
+		"$bundle_version" "$release_id" "$reference_version" "$reference_commit" "${#expected_sha[@]}"
 }
 
 grant_bundle_read_access() {
@@ -569,7 +622,11 @@ validate_bundle_zip() {
 	local zip_file=$1 sidecar=$2
 	verify_zip_sidecar "$zip_file" "$sidecar"
 	extract_zip_safely "$zip_file" "$TMP_BUNDLE/extract"
-	BUNDLE_ROOT="$TMP_BUNDLE/extract/takusuki-update3-bundle"
+	if [[ -d "$TMP_BUNDLE/extract/takusuki-update5-bundle" ]]; then
+		BUNDLE_ROOT="$TMP_BUNDLE/extract/takusuki-update5-bundle"
+	else
+		BUNDLE_ROOT="$TMP_BUNDLE/extract/takusuki-update3-bundle"
+	fi
 	verify_bundle_manifest "$BUNDLE_ROOT"
 	PATCH_DIR="$BUNDLE_ROOT/misskey-patches"
 	SERIES_FILE="$PATCH_DIR/series"
@@ -583,7 +640,7 @@ acquire_bundle() {
 	step 'Download and verify Takusuki patch bundle'
 	command -v curl >/dev/null || fail 'curl missing'
 	command -v python3 >/dev/null || fail 'python3 missing'
-	TMP_BUNDLE=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-update3-bundle.XXXXXXXX")
+	TMP_BUNDLE=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-update5-bundle.XXXXXXXX")
 	local zip_file="$TMP_BUNDLE/bundle.zip" sidecar="$TMP_BUNDLE/bundle.zip.sha256" remote_ok=0
 	if [[ -n "$BUNDLE_FILE_OVERRIDE" ]]; then
 		[[ -f "$BUNDLE_FILE_OVERRIDE" && -f "$BUNDLE_SHA_FILE_OVERRIDE" ]] || fail 'local bundle override file missing'
@@ -646,7 +703,7 @@ const connection = {
   password: db.pass,
   database,
   connectionTimeoutMillis: 10000,
-  application_name: 'takusuki-update3-v4',
+  application_name: 'takusuki-update5-v5',
 };
 
 if (action === 'dump') {
@@ -735,19 +792,18 @@ confirm_yes() {
 
 wait_for_readiness() {
 	local attempt
-	for attempt in $(seq 1 30); do
+	for attempt in $(seq 1 "$READINESS_ATTEMPTS"); do
 		if ! systemctl is-active --quiet "$SERVICE_NAME"; then
-			fail "systemd service stopped during startup wait (attempt $attempt)"
+			fail "systemd service stopped during startup wait (attempt $attempt/$READINESS_ATTEMPTS)"
 		fi
-		if ss -ltnH | awk '$4 ~ /:3000$/ { found=1 } END { exit !found }' \
-			&& curl --fail --silent --max-time 5 --output /dev/null "$HEALTH_LOCAL_URL" \
+		if curl --fail --silent --max-time 5 --output /dev/null "$HEALTH_LOCAL_URL" \
 			&& curl --fail --silent --max-time 5 --output /dev/null -H 'Content-Type: application/json' -d '{}' "$HEALTH_API_URL"; then
-			printf '[OK] Local readiness after attempt %d/30\n' "$attempt"
+			printf '[OK] Local readiness after attempt %d/%d\n' "$attempt" "$READINESS_ATTEMPTS"
 			return 0
 		fi
-		sleep 2
+		sleep "$READINESS_INTERVAL_SECONDS"
 	done
-	fail 'local Misskey readiness did not pass within 60 seconds'
+	fail "local Misskey readiness did not pass after $READINESS_ATTEMPTS attempts"
 }
 
 run_health_checks() {
@@ -808,7 +864,7 @@ run_db_backup() {
 
 history_is_rollback_capable() {
 	local directory=$1
-	[[ -f "$directory/metadata.tsv" && -f "$directory/result.tsv" \
+	[[ -f "$directory/metadata.tsv" \
 		&& -f "$directory/pre-update-working-tree.patch" \
 		&& -f "$directory/pre-update-untracked.list0" \
 		&& -f "$directory/pre-update-untracked.tar.gz" \
@@ -826,11 +882,15 @@ select_rollback_history() {
 		old=$(awk -F '\t' '$1 == "old_version" { print $2 }' "$directory/metadata.tsv")
 		new=$(awk -F '\t' '$1 == "new_target" { print $2 }' "$directory/metadata.tsv")
 		stamp=$(awk -F '\t' '$1 == "timestamp" { print $2 }' "$directory/metadata.tsv")
-		status=$(awk -F '\t' '$1 == "health" { print $2 }' "$directory/result.tsv")
+		if [[ -f "$directory/result.tsv" ]]; then
+			status=$(awk -F '\t' '$1 == "health" { print $2 }' "$directory/result.tsv")
+		else
+			status='FAILED_OR_INCOMPLETE'
+		fi
 		printf ' [%d] %s\n     %s -> %s  %s\n' "$index" "$stamp" "$old" "$new" "${status:-UNKNOWN}"
 		((index++))
 	done < <(find "$STATE_DIR/backups" -mindepth 1 -maxdepth 1 -type d -print | sort -r)
-	((${#choices[@]} > 0)) || fail 'no migration-aware v4 rollback history is available'
+	((${#choices[@]} > 0)) || fail 'no migration-aware v4/v5 rollback history is available'
 	if [[ -n "$ROLLBACK_ID" ]]; then
 		[[ "$ROLLBACK_ID" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'unsafe rollback ID'
 		BACKUP_DIR="$STATE_DIR/backups/$ROLLBACK_ID"
@@ -860,6 +920,19 @@ remove_manifest_managed_paths() {
 			rm -f -- "$MISSKEY_DIR/$path"
 		done
 	done < "$manifest"
+}
+
+write_patch_state_files() {
+	local directory=$1 manifest_name=$2 series_name=$3 count=$4 index patch
+	(( count >= 0 && count <= ${#SERIES[@]} )) || fail "invalid patch-state count: $count"
+	sed -n '1p' "$MANIFEST_FILE" > "$directory/$manifest_name"
+	: > "$directory/$series_name"
+	for ((index=0; index<count; index++)); do
+		patch=${SERIES[index]}
+		awk -F '\t' -v filename="$patch" '$2 == filename { print; found=1 } END { if (!found) exit 1 }' \
+			"$MANIFEST_FILE" >> "$directory/$manifest_name" || fail "patch state metadata missing: $patch"
+		printf '%s\n' "$patch" >> "$directory/$series_name"
+	done
 }
 
 run_rollback() {
@@ -920,8 +993,8 @@ fi
 LOG_FILE="$LOG_DIR/update-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-printf 'Takusuki update3 v%s\n' "$UPDATE3_VERSION"
-printf 'Mode=%s check=%d patch_only=%d\n' "$MODE" "$CHECK_ONLY" "$PATCH_ONLY"
+printf 'Takusuki updater v%s\n' "$UPDATER_VERSION"
+printf 'Mode=%s flavor=%s check=%d patch_only=%d\n' "$MODE" "$UPDATE_FLAVOR" "$CHECK_ONLY" "$PATCH_ONLY"
 
 case "$MODE" in
 	db-backup)
@@ -1039,20 +1112,7 @@ classify_current_source() {
 		fi
 	done < <(as_misskey git -C "$MISSKEY_DIR" diff --name-only HEAD --)
 
-	if [[ "$current_commit" != "$TARGET_COMMIT" ]]; then
-		as_misskey git -C "$MISSKEY_DIR" diff --quiet HEAD -- || fail 'different-version source has tracked modifications; automatic conversion is unsupported'
-		for path in "${PATCH_MANAGED_PATHS[@]}"; do
-			if ! as_misskey git -C "$MISSKEY_DIR" ls-files --error-unmatch -- "$path" >/dev/null 2>&1 && [[ -e "$MISSKEY_DIR/$path" ]]; then
-				fail "different-version source has a managed untracked path: $path"
-			fi
-		done
-		SOURCE_PATCH_COUNT=0
-		SOURCE_STATE='different-official-version-clean'
-		printf 'Source state: %s (%s via %s)\n' "$SOURCE_STATE" "$current_commit" "$official_ref"
-		return
-	fi
-
-	work=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-update3-state.XXXXXXXX")
+	work=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-update5-state.XXXXXXXX")
 	if (( EUID == 0 )); then chown "$MISSKEY_USER":"$(id -gn "$MISSKEY_USER")" "$work"; fi
 	as_misskey git -C "$MISSKEY_DIR" worktree add --detach "$work/tree" "$current_commit" >/dev/null
 	actual=$(managed_state_digest "$MISSKEY_DIR")
@@ -1060,11 +1120,12 @@ classify_current_source() {
 		expected=$(managed_state_digest "$work/tree")
 		[[ "$actual" == "$expected" ]] && match=$index
 		if ((index < ${#SERIES[@]})); then
-			as_misskey git -C "$work/tree" apply --whitespace=error-all "$PATCH_DIR/${SERIES[index]}" || {
+			if ! as_misskey git -C "$work/tree" apply --whitespace=error-all "$PATCH_DIR/${SERIES[index]}"; then
+				((match >= 0)) && break
 				as_misskey git -C "$MISSKEY_DIR" worktree remove --force "$work/tree" >/dev/null 2>&1 || true
 				rm -rf -- "$work"
 				fail "current-base patch series cannot be classified at ${SERIES[index]}"
-			}
+			fi
 		fi
 	done
 	as_misskey git -C "$MISSKEY_DIR" worktree remove --force "$work/tree" >/dev/null
@@ -1077,7 +1138,8 @@ classify_current_source() {
 		4) SOURCE_STATE='001-010-020-030-applied' ;;
 		*) SOURCE_STATE="supported-prefix-${match}-applied" ;;
 	esac
-	printf 'Source state: %s (%d/%d patches)\n' "$SOURCE_STATE" "$SOURCE_PATCH_COUNT" "${#SERIES[@]}"
+	printf 'Source state: %s (%d/%d patches, base=%s via %s)\n' \
+		"$SOURCE_STATE" "$SOURCE_PATCH_COUNT" "${#SERIES[@]}" "$current_commit" "$official_ref"
 }
 
 collect_patch_managed_paths
@@ -1140,8 +1202,16 @@ esac
 printf 'Resolved target: %s (%s)\n' "$TARGET_LABEL" "$TARGET_COMMIT"
 CURRENT_VERSION=$(current_version)
 TARGET_VERSION=$(as_misskey git -C "$MISSKEY_DIR" show "$TARGET_COMMIT:package.json" | node -e "let s=''; process.stdin.on('data', c => s += c).on('end', () => process.stdout.write(JSON.parse(s).version ?? 'UNKNOWN'))")
-[[ "$TARGET_VERSION" == "$BUNDLE_TARGET_VERSION" ]] || fail "bundle is validated only for Misskey $BUNDLE_TARGET_VERSION, not $TARGET_VERSION"
-[[ "$TARGET_COMMIT" == "$BUNDLE_TARGET_COMMIT" ]] || fail "bundle is validated only for official commit $BUNDLE_TARGET_COMMIT"
+if [[ "$UPDATE_FLAVOR" == 'vanilla' ]]; then
+	TARGET_COMPATIBILITY_STATUS='NOT_APPLICABLE_VANILLA_OFFICIAL'
+elif [[ "$TARGET_VERSION" == "$BUNDLE_REFERENCE_VERSION" && "$TARGET_COMMIT" == "$BUNDLE_REFERENCE_COMMIT" ]]; then
+	TARGET_COMPATIBILITY_STATUS='REFERENCE_VALIDATED'
+else
+	TARGET_COMPATIBILITY_STATUS='UNVERIFIED_TARGET_PATCH_PREFLIGHT_REQUIRED'
+	printf '%sNOTICE: %s@%s is outside the bundle reference %s@%s.%s\n' \
+		"$C_YELLOW" "$TARGET_VERSION" "$TARGET_COMMIT" "$BUNDLE_REFERENCE_VERSION" "$BUNDLE_REFERENCE_COMMIT" "$C_RESET"
+	printf 'Patch applicability, build, migration, service, and health remain fail-closed gates; this is not prior compatibility validation.\n'
+fi
 CHANGE_DIRECTION='non-release'
 if [[ "$CURRENT_VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ && "$TARGET_VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]; then
 	if [[ "$CURRENT_VERSION" == "$TARGET_VERSION" ]]; then
@@ -1152,31 +1222,36 @@ if [[ "$CURRENT_VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ && "$TARGET_VERSION" =~ ^
 		CHANGE_DIRECTION='upgrade'
 	fi
 fi
-printf 'Current version: %s\nTarget version : %s\nDirection      : %s\n' "$CURRENT_VERSION" "$TARGET_VERSION" "$CHANGE_DIRECTION"
+printf 'Current version: %s\nTarget version : %s\nDirection      : %s\nUpdate mode    : %s\nCompatibility : %s\n' \
+	"$CURRENT_VERSION" "$TARGET_VERSION" "$CHANGE_DIRECTION" "${UPDATE_FLAVOR^^}" "$TARGET_COMPATIBILITY_STATUS"
 EXPECTED_PNPM=$(as_misskey git -C "$MISSKEY_DIR" show "$TARGET_COMMIT:package.json" | node -e "let s=''; process.stdin.on('data', c => s += c).on('end', () => { const p=JSON.parse(s).packageManager || ''; process.stdout.write(p.startsWith('pnpm@') ? p.slice(5) : ''); });")
 [[ -n "$EXPECTED_PNPM" ]] || fail 'package.json has no pnpm packageManager'
 
 check_patch_series() {
-	step 'Check patch compatibility in an isolated official worktree'
-	TMP_WORKTREE=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-update3.XXXXXXXX")
+	step 'Check target in an isolated official worktree'
+	TMP_WORKTREE=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-update5.XXXXXXXX")
 	if (( EUID == 0 )); then
 		chown "$MISSKEY_USER":"$(id -gn "$MISSKEY_USER")" "$TMP_WORKTREE"
 	fi
 	as_misskey git -C "$MISSKEY_DIR" worktree add --detach "$TMP_WORKTREE/tree" "$TARGET_COMMIT"
 
 	local patch
-	for patch in "${SERIES[@]}"; do
-		[[ "${PATCH_REQUIRED[$patch]}" == 'required' ]] || fail "series contains a non-required patch: $patch"
-		printf 'Checking %s %s [%s; %s; %s]\n' \
-			"${PATCH_ID[$patch]}" "$patch" "${PATCH_DESCRIPTION[$patch]}" \
-			"${PATCH_INTRODUCED[$patch]}" "${PATCH_UPSTREAM[$patch]}"
-		if ! as_misskey git -C "$TMP_WORKTREE/tree" apply --check --whitespace=error-all "$PATCH_DIR/$patch"; then
-			printf 'PATCH COMPATIBILITY FAILURE: %s\n' "$patch" >&2
-			printf 'The change may already be upstream or the patch needs a reviewed refresh.\n' >&2
-			exit 20
-		fi
-		as_misskey git -C "$TMP_WORKTREE/tree" apply --whitespace=error-all "$PATCH_DIR/$patch"
-	done
+	if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
+		for patch in "${SERIES[@]}"; do
+			[[ "${PATCH_REQUIRED[$patch]}" == 'required' ]] || fail "series contains a non-required patch: $patch"
+			printf 'Checking %s %s [%s; %s; %s]\n' \
+				"${PATCH_ID[$patch]}" "$patch" "${PATCH_DESCRIPTION[$patch]}" \
+				"${PATCH_INTRODUCED[$patch]}" "${PATCH_UPSTREAM[$patch]}"
+			if ! as_misskey git -C "$TMP_WORKTREE/tree" apply --check --whitespace=error-all "$PATCH_DIR/$patch"; then
+				printf 'PATCH COMPATIBILITY FAILURE: %s\n' "$patch" >&2
+				printf 'The change may already be upstream or the patch needs a reviewed refresh.\n' >&2
+				exit 20
+			fi
+			as_misskey git -C "$TMP_WORKTREE/tree" apply --whitespace=error-all "$PATCH_DIR/$patch"
+		done
+	else
+		printf 'VANILLA: patch application and canonical asset replacement are disabled.\n'
+	fi
 	as_misskey git -C "$TMP_WORKTREE/tree" diff --check
 	[[ -f "$TMP_WORKTREE/tree/packages/frontend/assets/unknown.png" ]] || fail 'frontend asset target path missing'
 	if (( PATCH_ONLY == 0 )); then
@@ -1190,7 +1265,11 @@ check_patch_series() {
 			bash "$TMP_WORKTREE/tree" "pnpm@$EXPECTED_PNPM" --version)
 		[[ "$ACTUAL_PNPM" == "$EXPECTED_PNPM" ]] || fail "pnpm mismatch: expected $EXPECTED_PNPM, got $ACTUAL_PNPM"
 	fi
-	printf 'PATCH PIPELINE CHECK PASS\n'
+	if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
+		printf 'PATCH PIPELINE CHECK PASS\n'
+	else
+		printf 'VANILLA TARGET CHECK PASS\n'
+	fi
 	as_misskey git -C "$MISSKEY_DIR" worktree remove --force "$TMP_WORKTREE/tree"
 	rm -rf -- "$TMP_WORKTREE"
 	TMP_WORKTREE=''
@@ -1237,10 +1316,16 @@ printf '  %s\n' "${DB_DIAGNOSTICS[@]}"
 UNTRACKED_COUNT=$(as_misskey git -C "$MISSKEY_DIR" ls-files --others --exclude-standard | wc -l)
 printf 'Source=%s untracked_preserved=%s rollback_state=%s\n' "$SOURCE_STATE" "$UNTRACKED_COUNT" "$STATE_DIR"
 
-if (( SOURCE_PATCH_COUNT == ${#SERIES[@]} )) && [[ "$(as_misskey git -C "$MISSKEY_DIR" rev-parse HEAD)" == "$TARGET_COMMIT" ]]; then
-	printf 'ALREADY APPLIED: official %s@%s with all %d managed patches. No reset, build, migration, or service restart was performed.\n' \
-		"$TARGET_VERSION" "$TARGET_COMMIT" "${#SERIES[@]}"
-	exit 0
+if [[ "$(as_misskey git -C "$MISSKEY_DIR" rev-parse HEAD)" == "$TARGET_COMMIT" ]]; then
+	if [[ "$UPDATE_FLAVOR" == 'patched' ]] && (( SOURCE_PATCH_COUNT == ${#SERIES[@]} )); then
+		printf 'ALREADY APPLIED: official %s@%s with all %d managed patches. No reset, build, migration, or service restart was performed.\n' \
+			"$TARGET_VERSION" "$TARGET_COMMIT" "${#SERIES[@]}"
+		exit 0
+	elif [[ "$UPDATE_FLAVOR" == 'vanilla' ]] && (( SOURCE_PATCH_COUNT == 0 )); then
+		printf 'ALREADY APPLIED VANILLA: exact official %s@%s with no managed patches. No reset, build, migration, or service restart was performed.\n' \
+			"$TARGET_VERSION" "$TARGET_COMMIT"
+		exit 0
+	fi
 fi
 
 if (( CHECK_ONLY == 1 )); then
@@ -1249,6 +1334,12 @@ if (( CHECK_ONLY == 1 )); then
 fi
 
 printf '\n%sDBバックアップは自動取得しません。必要な場合はメニュー5 / --db-backupを先に実行してください。%s\n' "$C_YELLOW" "$C_RESET"
+if [[ "$UPDATE_FLAVOR" == 'vanilla' ]]; then
+	printf '%s更新モード: VANILLA — 現在の卓すきー独自改変を除去し、公式%sをパッチなしで構築します。%s\n' \
+		"$C_YELLOW" "$TARGET_VERSION" "$C_RESET"
+	for patch in "${SERIES[@]}"; do printf '  %s SKIPPED  %s\n' "${PATCH_ID[$patch]}" "${PATCH_DESCRIPTION[$patch]}"; done
+	printf 'DB、Redis、.config/default.yml、uploads、無関係な未追跡ファイルは削除しません。\n'
+fi
 if (( BACKUP_CONFIRMED == 1 )); then printf 'NOTICE: --backup-confirmed is accepted only for v3 CLI compatibility and is not required.\n'; fi
 if (( INTERACTIVE == 1 )); then
 	case "$MODE:$CHANGE_DIRECTION" in
@@ -1262,7 +1353,7 @@ if (( INTERACTIVE == 1 )); then
 			read -r -p '続行するには「DOWNGRADE」と入力してください: ' answer
 			[[ "$answer" == 'DOWNGRADE' ]] || fail 'downgrade confirmation did not match'
 			;;
-		*) confirm_yes "$CURRENT_VERSION → $TARGET_VERSION にアップデートしますか？" || { printf 'Cancelled.\n'; exit 0; } ;;
+		*) confirm_yes "$CURRENT_VERSION → $TARGET_VERSION (${UPDATE_FLAVOR^^}) にアップデートしますか？" || { printf 'Cancelled.\n'; exit 0; } ;;
 	esac
 	ASSUME_YES=1
 else
@@ -1277,8 +1368,10 @@ BACKUP_DIR="$STATE_DIR/backups/$(date -u +%Y%m%dT%H%M%SZ)-$$-${TARGET_LABEL//\//
 install -d -o root -g "$(id -gn "$MISSKEY_USER")" -m 0750 "$BACKUP_DIR"
 OLD_COMMIT=$(as_misskey git -C "$MISSKEY_DIR" rev-parse HEAD)
 OLD_VERSION=$(node -e "process.stdout.write(require(process.argv[1]).version)" "$MISSKEY_DIR/package.json")
+DEFAULT_YML_SHA=$(sha256sum "$MISSKEY_DIR/.config/default.yml" | awk '{print $1}')
 {
-	printf 'update3_version\t%s\n' "$UPDATE3_VERSION"
+	printf 'updater_version\t%s\n' "$UPDATER_VERSION"
+	printf 'update_mode\t%s\n' "${UPDATE_FLAVOR^^}"
 	printf 'timestamp\t%s\n' "$(date --iso-8601=seconds)"
 	printf 'old_version\t%s\n' "$OLD_VERSION"
 	printf 'old_commit\t%s\n' "$OLD_COMMIT"
@@ -1289,12 +1382,15 @@ OLD_VERSION=$(node -e "process.stdout.write(require(process.argv[1]).version)" "
 	printf 'service_state\t%s\n' "$(systemctl is-active "$SERVICE_NAME" || true)"
 	printf 'node\t%s\n' "$(node --version)"
 	printf 'pnpm\t%s\n' "$ACTUAL_PNPM"
-	printf 'asset_sha256\t%s\n' "$ASSET_ACTUAL"
-	printf 'default_yml_sha256\t%s\n' "$(sha256sum "$MISSKEY_DIR/.config/default.yml" | awk '{print $1}')"
+	printf 'bundle_asset_sha256\t%s\n' "$ASSET_ACTUAL"
+	printf 'asset_install\t%s\n' "$([[ "$UPDATE_FLAVOR" == 'patched' ]] && printf MANAGED || printf SKIPPED_VANILLA)"
+	printf 'default_yml_sha256\t%s\n' "$DEFAULT_YML_SHA"
 	printf 'systemd_unit_sha256\t%s\n' "$(systemctl cat "$SERVICE_NAME" --no-pager | sha256sum | awk '{print $1}')"
 	printf 'bundle_release_id\t%s\n' "$BUNDLE_RELEASE_ID"
-	printf 'bundle_target_version\t%s\n' "$BUNDLE_TARGET_VERSION"
-	printf 'bundle_target_commit\t%s\n' "$BUNDLE_TARGET_COMMIT"
+	printf 'bundle_format_version\t%s\n' "$BUNDLE_FORMAT_VERSION"
+	printf 'bundle_reference_version\t%s\n' "$BUNDLE_REFERENCE_VERSION"
+	printf 'bundle_reference_commit\t%s\n' "$BUNDLE_REFERENCE_COMMIT"
+	printf 'target_compatibility_status\t%s\n' "$TARGET_COMPATIBILITY_STATUS"
 	printf 'source_state\t%s\n' "$SOURCE_STATE"
 	if [[ -n "${POSTGRESQL_CONF:-}" && -r "$POSTGRESQL_CONF" ]]; then
 		printf 'postgresql_conf_sha256\t%s\n' "$(sha256sum "$POSTGRESQL_CONF" | awk '{print $1}')"
@@ -1312,10 +1408,9 @@ if [[ -f "$STATE_DIR/current-patch-manifest.tsv" && -f "$STATE_DIR/current-patch
 	cp "$STATE_DIR/current-patch-manifest.tsv" "$BACKUP_DIR/pre-update-patch-manifest.tsv"
 	cp "$STATE_DIR/current-patch-series" "$BACKUP_DIR/pre-update-patch-series"
 else
-	# First v4 run: the binary diff remains authoritative. These files describe
-	# the Takusuki-managed paths restored by that diff.
-	cp "$MANIFEST_FILE" "$BACKUP_DIR/pre-update-patch-manifest.tsv"
-	cp "$SERIES_FILE" "$BACKUP_DIR/pre-update-patch-series"
+	# First v5 run after an older updater: derive the exact current prefix rather
+	# than claiming all bundle patches for an unpatched/partial source.
+	write_patch_state_files "$BACKUP_DIR" pre-update-patch-manifest.tsv pre-update-patch-series "$SOURCE_PATCH_COUNT"
 fi
 # The updater is root, while Git intentionally runs as the Misskey account. Let
 # the root shell own the redirection so Git never needs directory write access.
@@ -1350,23 +1445,40 @@ done
 as_misskey git -C "$MISSKEY_DIR" checkout --detach "$TARGET_COMMIT"
 as_misskey git -C "$MISSKEY_DIR" reset --hard "$TARGET_COMMIT"
 as_misskey git -C "$MISSKEY_DIR" submodule update --init --recursive
+install -o "$MISSKEY_USER" -g "$(id -gn "$MISSKEY_USER")" -m 0600 "$BACKUP_DIR/default.yml" "$MISSKEY_DIR/.config/default.yml"
+[[ "$(sha256sum "$MISSKEY_DIR/.config/default.yml" | awk '{print $1}')" == "$DEFAULT_YML_SHA" ]] || fail '.config/default.yml preservation failed'
 
-step 'Apply required patch series'
-for patch in "${SERIES[@]}"; do
-	as_misskey git -C "$MISSKEY_DIR" apply --check --whitespace=error-all "$PATCH_DIR/$patch" || {
-		printf 'PATCH COMPATIBILITY FAILURE: %s\n' "$patch" >&2
-		exit 20
-	}
-	as_misskey git -C "$MISSKEY_DIR" apply --whitespace=error-all "$PATCH_DIR/$patch"
-	printf '%s\t%s\t%s\n' "${PATCH_ID[$patch]}" "$patch" "${PATCH_SHA[$patch]}" | tee -a "$BACKUP_DIR/applied-patches.tsv"
-done
+step 'Apply selected source mode'
+if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
+	for patch in "${SERIES[@]}"; do
+		as_misskey git -C "$MISSKEY_DIR" apply --check --whitespace=error-all "$PATCH_DIR/$patch" || {
+			printf 'PATCH COMPATIBILITY FAILURE: %s\n' "$patch" >&2
+			exit 20
+		}
+		as_misskey git -C "$MISSKEY_DIR" apply --whitespace=error-all "$PATCH_DIR/$patch"
+		printf '%s\t%s\t%s\n' "${PATCH_ID[$patch]}" "$patch" "${PATCH_SHA[$patch]}" | tee -a "$BACKUP_DIR/applied-patches.tsv"
+	done
+else
+	printf 'VANILLA\tSKIPPED_ALL_PATCHES\tOFFICIAL_SOURCE_ONLY\n' > "$BACKUP_DIR/applied-patches.tsv"
+fi
 as_misskey git -C "$MISSKEY_DIR" diff --check
 as_misskey git -C "$MISSKEY_DIR" status --short
 as_misskey git -C "$MISSKEY_DIR" diff --stat
+classify_current_source
+if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
+	(( SOURCE_PATCH_COUNT == ${#SERIES[@]} )) || fail 'partial patch state detected after application'
+else
+	(( SOURCE_PATCH_COUNT == 0 )) || fail 'managed patch residue detected in Vanilla source'
+fi
 
-step 'Install canonical asset'
-install -o "$MISSKEY_USER" -g "$(id -gn "$MISSKEY_USER")" -m 0644 "$ASSET_FILE" "$MISSKEY_DIR/packages/frontend/assets/unknown.png"
-[[ "$(sha256sum "$MISSKEY_DIR/packages/frontend/assets/unknown.png" | awk '{print $1}')" == "$ASSET_ACTUAL" ]] || fail 'installed asset checksum mismatch'
+if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
+	step 'Install canonical asset'
+	install -o "$MISSKEY_USER" -g "$(id -gn "$MISSKEY_USER")" -m 0644 "$ASSET_FILE" "$MISSKEY_DIR/packages/frontend/assets/unknown.png"
+	[[ "$(sha256sum "$MISSKEY_DIR/packages/frontend/assets/unknown.png" | awk '{print $1}')" == "$ASSET_ACTUAL" ]] || fail 'installed asset checksum mismatch'
+else
+	step 'Retain exact official Vanilla asset'
+	as_misskey git -C "$MISSKEY_DIR" diff --quiet -- packages/frontend/assets/unknown.png || fail 'Vanilla asset differs from official target'
+fi
 
 step 'Install dependencies and build'
 as_misskey env CI=true NODE_ENV=production corepack "pnpm@$EXPECTED_PNPM" --dir "$MISSKEY_DIR" install --frozen-lockfile --prefer-offline
@@ -1384,8 +1496,11 @@ run_health_checks
 SERVICE_START_EPOCH=$(date +%s)
 DOWNTIME_SECONDS=$((SERVICE_START_EPOCH - SERVICE_STOP_EPOCH))
 
-cp "$MANIFEST_FILE" "$STATE_DIR/current-patch-manifest.tsv"
-cp "$SERIES_FILE" "$STATE_DIR/current-patch-series"
+if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
+	write_patch_state_files "$STATE_DIR" current-patch-manifest.tsv current-patch-series "${#SERIES[@]}"
+else
+	write_patch_state_files "$STATE_DIR" current-patch-manifest.tsv current-patch-series 0
+fi
 db_node ledger > "$BACKUP_DIR/post-update-migrations.tsv"
 sha256sum "$BACKUP_DIR/post-update-migrations.tsv" | awk '{ print $1 }' > "$BACKUP_DIR/post-update-migrations.sha256"
 {
@@ -1394,7 +1509,10 @@ sha256sum "$BACKUP_DIR/post-update-migrations.tsv" | awk '{ print $1 }' > "$BACK
 	printf 'new_version\t%s\n' "$(node -e "process.stdout.write(require(process.argv[1]).version)" "$MISSKEY_DIR/package.json")"
 	printf 'old_commit\t%s\n' "$OLD_COMMIT"
 	printf 'new_official_commit\t%s\n' "$TARGET_COMMIT"
-	printf 'asset_sha256\t%s\n' "$ASSET_ACTUAL"
+	printf 'update_mode\t%s\n' "${UPDATE_FLAVOR^^}"
+	printf 'target_compatibility_status\t%s\n' "$TARGET_COMPATIBILITY_STATUS"
+	printf 'bundle_asset_sha256\t%s\n' "$ASSET_ACTUAL"
+	printf 'default_yml_preserved\tPASS\n'
 	printf 'install\tPASS\n'
 	printf 'build\tPASS\n'
 	printf 'migration\tPASS\n'
@@ -1404,6 +1522,11 @@ sha256sum "$BACKUP_DIR/post-update-migrations.tsv" | awk '{ print $1 }' > "$BACK
 } > "$BACKUP_DIR/result.tsv"
 
 printf '\n============================================================\n 更新完了\n============================================================\n'
-printf '旧Version : %s\n新Version : %s\n\n' "$OLD_VERSION" "$(current_version)"
-for patch in "${SERIES[@]}"; do printf 'Patch [OK] %s %s\n' "${PATCH_ID[$patch]}" "${PATCH_DESCRIPTION[$patch]}"; done
+printf '旧Version : %s\n新Version : %s\nMode        : %s\nCompatibility: %s\n\n' \
+	"$OLD_VERSION" "$(current_version)" "${UPDATE_FLAVOR^^}" "$TARGET_COMPATIBILITY_STATUS"
+if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
+	for patch in "${SERIES[@]}"; do printf 'Patch [OK] %s %s\n' "${PATCH_ID[$patch]}" "${PATCH_DESCRIPTION[$patch]}"; done
+else
+	printf 'Patch [SKIPPED] Vanilla official source\n'
+fi
 printf '\nInstall   : PASS\nBuild     : PASS\nMigration : PASS\nService   : PASS\nHealth    : PASS\n停止時間 : %s秒\nMetadata : %s\nLog      : %s\n' "$DOWNTIME_SECONDS" "$BACKUP_DIR" "$LOG_FILE"

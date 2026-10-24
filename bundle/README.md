@@ -1,6 +1,6 @@
 # Takusuki Update Bundle
 
-このdirectoryは、`takusuki_update3.sh`が利用するTakusuki固有のruntime bundle sourceを
+このdirectoryは、`takusuki_update5.sh`が利用するTakusuki固有のruntime bundle sourceを
 管理します。
 
 canonical source:
@@ -46,16 +46,16 @@ same-version deploymentとして適用済みです。
 
 ## Release identity
 
-Release IDとMisskey versionは分離しています。4.1.0 bundleは次をmanifestに固定します。
+Release IDとMisskey versionは分離しています。5.0.0 format 2 bundleは対象を拒否する固定値ではなく、
+深い互換性証拠が存在する参照version/commitを記録します。
 
 ```text
-release_id: 4.1.0
-target_misskey_version: 2026.10.0
-target_official_commit: de89118a225fbe0833e42ab94e8d5af1e5211208
-bundle_sha256: 7b68d319e1b98938de80f56348839937809bfd9f4acc66fe2cb33eec99c11742
+release_id: 5.0.0
+compatibility_reference_version: 2026.10.0
+compatibility_reference_commit: de89118a225fbe0833e42ab94e8d5af1e5211208
+bundle_sha256: 827da22c6d4e9e1a3f05334df4f1de7bd988d4138973c73961e514b8c1bd067b
 ```
-Productionへの適用有無はbundle identityとは別に記録します。4.1.0 release作業ではProductionへ
-適用しません。
+異なる公式tagにもpatch適用を試せますが、参照version外は未検証targetとして記録されます。
 
 ## Build and validation
 

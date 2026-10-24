@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.0.0 - 2026-10-25
+
+- bundleのMisskey version/commit固定拒否を廃止し、互換性参照情報へ変更
+- 参照外の公式tagにも001/010/020/030を厳密な順序で事前検査・適用
+- `--vanilla --tag VERSION`と対話メニュー6を追加
+- Vanilla更新でmanaged patch/assetを公式状態へ戻し、設定・DB・Redis・untrackedを保護
+- 現在HEAD基準のpatch prefix分類により、パッチ済み旧versionから新versionへの更新へ対応
+- metadataへPATCHED/VANILLA、target commit、参照一致／未検証状態を記録
+- format 1 bundle読取互換、format 2 manifest、v5配布名、v4固定URL維持を実装
+
 ## Unreleased
 
 - 2026.10.0＋001/010/020/030のProduction適用後を読み取り専用で観測し、実ログ上の

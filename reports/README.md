@@ -1,5 +1,10 @@
 # Takusuki Update reports
 
+## Updater v5
+
+- [v5.0.0 Staging release validation](v5.0.0-staging-release-validation.md): isolated patched and
+  Vanilla upgrades, injected failures, rollback, preservation, and deterministic release checks.
+
 ## Note blocked-host performance
 
 - [Note blocked-host query optimization candidate](note-blocked-host-optimization.md): root cause,

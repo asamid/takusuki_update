@@ -1,10 +1,10 @@
-# License audit — Takusuki Update3 v4.1.0
+# License audit — Takusuki Update v5.0.0
 
 Audit date: 2026-09-03
 
 | Path | License | Basis |
 |---|---|---|
-| `takusuki_update3.sh` | MIT | Takusuki updater code; root `LICENSE` |
+| `takusuki_update5.sh` | MIT | Takusuki updater code; root `LICENSE` |
 | `scripts/*` | MIT | Takusuki original build/verification helpers; root `LICENSE` |
 | `legacy/takusuki_update2.sh` | MIT | Existing notice; joinmisskey/bash-install MIT notice retained |
 | `bundle/**/001-max-note-text-length.patch` | AGPL-3.0-only | Misskey-derived source patch |
