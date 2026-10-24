@@ -7,6 +7,8 @@
   Production gate.
 - [v4.1.0 Staging release validation](v4.1.0-staging-release-validation.md): distributed artifact
   application, same-version rerun, rollback/reapply, invariants and observed PGroonga 4.0.1 timeout.
+- [v4.1.0 Production performance validation](v4.1.0-production-performance.md): read-only
+  post-deployment SQL shape, API, timeout, CPU, worker, federation and future-update assessment.
 
 ## Gallery 256
 
