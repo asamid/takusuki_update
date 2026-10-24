@@ -46,19 +46,16 @@ same-version deploymentとして適用済みです。
 
 ## Release identity
 
-Production accepted bundle SHA-256:
+Release IDとMisskey versionは分離しています。4.1.0 bundleは次をmanifestに固定します。
 
 ```text
-f1d69fcbdf292a42062f60d83917ad1c82504b28964d98c13711ebd4122372d5
+release_id: 4.1.0
+target_misskey_version: 2026.10.0
+target_official_commit: de89118a225fbe0833e42ab94e8d5af1e5211208
+bundle_sha256: 7b68d319e1b98938de80f56348839937809bfd9f4acc66fe2cb33eec99c11742
 ```
-
-030を含むcandidate bundle SHA-256:
-
-```text
-63915baca799a8f87cffd4819d0c848b49822d36c0d38c8f7e6adcec0927c3b5
-```
-
-Production未反映です。
+Productionへの適用有無はbundle identityとは別に記録します。4.1.0 release作業ではProductionへ
+適用しません。
 
 ## Build and validation
 

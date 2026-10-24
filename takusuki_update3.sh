@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: Interactive and non-interactive, reproducible, fail-closed Misskey operations.
 # Author: asami / Takusuki operations (implementation prepared with Codex)
-# Version: 4.0.0
+# Version: 4.1.0
 # Changelog: v4 adds interactive UI, verified self-downloaded bundles, independent
 # DB backups, migration-aware rollback history, and cwd-independent user switching.
 # Safety design: preflight and patch checks run before downtime; required failures stop the update.
@@ -11,12 +11,10 @@
 set -Eeuo pipefail
 umask 077
 
-readonly UPDATE3_VERSION='4.0.0'
+readonly UPDATE3_VERSION='4.1.0'
 readonly BUNDLE_FORMAT_VERSION='1'
 readonly DEFAULT_BUNDLE_URL='https://labo.takusuki.com/update3/takusuki-update3-bundle.zip'
 readonly DEFAULT_BUNDLE_SHA_URL='https://labo.takusuki.com/update3/takusuki-update3-bundle.zip.sha256'
-readonly PRODUCTION_IPV4='192.168.100.29'
-readonly PRODUCTION_IPV6='2400:4051:b900:7400:250:56ff:fe22:664c'
 
 MODE=''
 TARGET_VALUE=''
@@ -45,6 +43,11 @@ OLD_COMMIT=''
 UPDATE_STARTED_EPOCH=''
 SERVICE_STOP_EPOCH=''
 SERVICE_START_EPOCH=''
+BUNDLE_RELEASE_ID=''
+BUNDLE_TARGET_VERSION=''
+BUNDLE_TARGET_COMMIT=''
+SOURCE_PATCH_COUNT=''
+SOURCE_STATE=''
 
 usage() {
 	cat <<'USAGE'
@@ -82,7 +85,7 @@ Options:
   --help               Show this help
 
 Configuration environment:
-  MISSKEY_USER, MISSKEY_DIR, SERVICE_NAME
+  MISSKEY_USER, MISSKEY_DIR, SERVICE_NAME (auto-detected when unset)
   HEALTH_LOCAL_URL, HEALTH_LAN_URL, HEALTH_PUBLIC_URL, HEALTH_API_URL
   LOG_DIR, STATE_DIR, MIN_FREE_KB, POSTGRESQL_CONF, REQUIRE_ENV_FILE
   BUNDLE_URL, BUNDLE_SHA_URL, BUNDLE_CACHE_DIR, DB_BACKUP_DIR
@@ -264,7 +267,83 @@ if [[ -r /root/.misskey.env ]]; then
 	source /root/.misskey.env
 fi
 
-MISSKEY_USER=${MISSKEY_USER:-${misskey_user:-misskey}}
+choose_detected_value() {
+	local label=$1
+	shift
+	local -a values=("$@")
+	if ((${#values[@]} == 1)); then
+		printf '%s' "${values[0]}"
+		return
+	fi
+	if ((${#values[@]} == 0)); then
+		fail "could not auto-detect $label; set it explicitly in /root/.misskey.env or the environment"
+	fi
+	if [[ ! -t 0 ]]; then
+		fail "multiple $label candidates detected (${values[*]}); set it explicitly"
+	fi
+	printf 'Multiple %s candidates were detected:\n' "$label" >&2
+	local i answer
+	for i in "${!values[@]}"; do printf ' [%d] %s\n' "$((i + 1))" "${values[i]}" >&2; done
+	while true; do
+		read -r -p "Select $label [1-${#values[@]}]: " answer
+		if [[ "$answer" =~ ^[0-9]+$ ]] && ((answer >= 1 && answer <= ${#values[@]})); then
+			printf '%s' "${values[answer - 1]}"
+			return
+		fi
+	done
+}
+
+detect_misskey_dir() {
+	local -a candidates=()
+	local unit directory candidate resolved existing
+	if command -v systemctl >/dev/null 2>&1; then
+		while read -r unit; do
+			[[ -n "$unit" ]] || continue
+			directory=$(systemctl show -p WorkingDirectory --value "$unit" 2>/dev/null || true)
+			[[ -n "$directory" && "$directory" != '/' ]] && candidates+=("$directory")
+		done < <(systemctl list-units --type=service --state=running --no-legend 2>/dev/null | awk '{print $1}')
+	fi
+	for candidate in /home/*/misskey /opt/misskey /srv/misskey; do
+		[[ -d "$candidate" ]] && candidates+=("$candidate")
+	done
+	local -a valid=()
+	for candidate in "${candidates[@]}"; do
+		[[ -f "$candidate/package.json" && -d "$candidate/packages/backend" && -e "$candidate/.git" ]] || continue
+		resolved=$(realpath -e "$candidate") || continue
+		existing=0
+		for directory in "${valid[@]}"; do [[ "$directory" == "$resolved" ]] && existing=1; done
+		((existing == 1)) || valid+=("$resolved")
+	done
+	choose_detected_value 'Misskey source directory' "${valid[@]}"
+}
+
+detect_service_name() {
+	local -a candidates=()
+	local unit directory resolved
+	while read -r unit; do
+		[[ -n "$unit" ]] || continue
+		directory=$(systemctl show -p WorkingDirectory --value "$unit" 2>/dev/null || true)
+		[[ -n "$directory" && "$directory" != '/' ]] || continue
+		resolved=$(realpath -e "$directory" 2>/dev/null || true)
+		[[ "$resolved" == "$MISSKEY_DIR" ]] && candidates+=("$unit")
+	done < <(systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}')
+	choose_detected_value 'systemd service' "${candidates[@]}"
+}
+
+MISSKEY_USER=${MISSKEY_USER:-${misskey_user:-}}
+if [[ -z "${MISSKEY_DIR:-}" && -n "${misskey_directory:-}" ]]; then
+	if [[ "$misskey_directory" == /* ]]; then
+		MISSKEY_DIR=$misskey_directory
+	elif [[ -n "$MISSKEY_USER" ]]; then
+		_detected_home=$(getent passwd "$MISSKEY_USER" | cut -d: -f6)
+		[[ -n "$_detected_home" ]] || fail "user does not exist: $MISSKEY_USER"
+		MISSKEY_DIR="$_detected_home/$misskey_directory"
+	fi
+fi
+MISSKEY_DIR=${MISSKEY_DIR:-}
+[[ -n "$MISSKEY_DIR" ]] || MISSKEY_DIR=$(detect_misskey_dir)
+MISSKEY_DIR=$(realpath -e "$MISSKEY_DIR") || fail "Misskey source directory does not exist: $MISSKEY_DIR"
+[[ -n "$MISSKEY_USER" ]] || MISSKEY_USER=$(stat -c %U "$MISSKEY_DIR")
 [[ "$MISSKEY_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || fail 'invalid MISSKEY_USER'
 MISSKEY_HOME=$(getent passwd "$MISSKEY_USER" | cut -d: -f6)
 [[ -n "$MISSKEY_HOME" ]] || fail "user does not exist: $MISSKEY_USER"
@@ -275,8 +354,8 @@ if [[ -r "$USER_ENV_FILE" ]]; then
 	source "$USER_ENV_FILE"
 fi
 
-MISSKEY_DIR=${MISSKEY_DIR:-"$MISSKEY_HOME/${misskey_directory:-misskey}"}
-SERVICE_NAME=${SERVICE_NAME:-${host:-takusuki.com}}
+SERVICE_NAME=${SERVICE_NAME:-${host:-}}
+[[ -n "$SERVICE_NAME" ]] || SERVICE_NAME=$(detect_service_name)
 LOG_DIR=${LOG_DIR:-/var/log/takusuki-update3}
 STATE_DIR=${STATE_DIR:-/var/lib/takusuki-update3}
 BUNDLE_CACHE_DIR=${BUNDLE_CACHE_DIR:-/var/cache/takusuki-update3}
@@ -415,7 +494,7 @@ PY
 verify_bundle_manifest() {
 	local root=$1 manifest="$1/bundle-manifest.tsv"
 	[[ -f "$manifest" && ! -L "$manifest" ]] || fail 'bundle-manifest.tsv missing or unsafe'
-	local kind key value size extra bundle_version='' minimum_version=''
+	local kind key value size extra bundle_version='' minimum_version='' release_id='' target_version='' target_commit=''
 	declare -A expected_sha expected_size
 	while IFS=$'\t' read -r kind key value size extra; do
 		[[ -n "$kind" ]] || continue
@@ -426,6 +505,9 @@ verify_bundle_manifest() {
 				case "$key" in
 					bundle_version) bundle_version=$value ;;
 					minimum_updater_version) minimum_version=$value ;;
+					release_id) release_id=$value ;;
+					target_misskey_version) target_version=$value ;;
+					target_official_commit) target_commit=$value ;;
 					generated_at) : ;;
 					*) fail "unknown bundle META key: $key" ;;
 				esac
@@ -444,6 +526,12 @@ verify_bundle_manifest() {
 	[[ "$bundle_version" == "$BUNDLE_FORMAT_VERSION" ]] || fail "unsupported bundle version: $bundle_version"
 	[[ -n "$minimum_version" ]] || fail 'bundle minimum updater version missing'
 	[[ "$(printf '%s\n%s\n' "$minimum_version" "$UPDATE3_VERSION" | sort -V | head -n 1)" == "$minimum_version" ]] || fail "bundle requires updater $minimum_version"
+	[[ "$release_id" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'bundle release ID is missing or invalid'
+	[[ "$target_version" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]] || fail 'bundle target Misskey version is missing or invalid'
+	[[ "$target_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'bundle target official commit is missing or invalid'
+	BUNDLE_RELEASE_ID=$release_id
+	BUNDLE_TARGET_VERSION=$target_version
+	BUNDLE_TARGET_COMMIT=$target_commit
 	((${#expected_sha[@]} > 0)) || fail 'bundle manifest contains no files'
 	local path relative actual_sha actual_size
 	while IFS= read -r -d '' path; do
@@ -460,7 +548,8 @@ verify_bundle_manifest() {
 		[[ "$actual_sha" == "${expected_sha[$relative]}" ]] || fail "bundle file SHA-256 mismatch: $relative"
 		[[ "$actual_size" == "${expected_size[$relative]}" ]] || fail "bundle file size mismatch: $relative"
 	done
-	printf '[OK] Bundle manifest: version=%s files=%d\n' "$bundle_version" "${#expected_sha[@]}"
+	printf '[OK] Bundle manifest: format=%s release=%s target=%s@%s files=%d\n' \
+		"$bundle_version" "$release_id" "$target_version" "$target_commit" "${#expected_sha[@]}"
 }
 
 grant_bundle_read_access() {
@@ -590,6 +679,41 @@ try {
   } else if (action === 'ledger') {
     const result = await client.query('SELECT id, timestamp, name FROM migrations ORDER BY id');
     for (const row of result.rows) process.stdout.write(`${row.id}\t${row.timestamp}\t${row.name}\n`);
+  } else if (action === 'diagnostics') {
+    const result = await client.query(`
+      SELECT current_setting('server_version') AS postgres_version,
+             (SELECT extversion FROM pg_extension WHERE extname = 'pgroonga') AS pgroonga_version,
+             (SELECT count(*)::text FROM migrations) AS migration_count,
+             (SELECT name FROM migrations ORDER BY id DESC LIMIT 1) AS latest_migration
+    `);
+    const row = result.rows[0];
+    process.stdout.write(`postgresql\t${row.postgres_version}\n`);
+    process.stdout.write(`pgroonga\t${row.pgroonga_version ?? 'NOT_INSTALLED'}\n`);
+    process.stdout.write(`migrations\t${row.migration_count}\n`);
+    process.stdout.write(`latest_migration\t${row.latest_migration ?? 'NONE'}\n`);
+    const RedisModule = require('ioredis');
+    const Redis = RedisModule.default ?? RedisModule;
+    const redisConfig = config.redis ?? {};
+    const redis = new Redis({
+      host: redisConfig.host,
+      port: redisConfig.port,
+      family: redisConfig.family,
+      password: redisConfig.pass ?? redisConfig.password,
+      db: redisConfig.db,
+      tls: redisConfig.tls,
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      connectTimeout: 5000,
+      maxRetriesPerRequest: 0,
+    });
+    try {
+      await redis.connect();
+      const pong = await redis.ping();
+      if (pong !== 'PONG') throw new Error(`unexpected Redis PING response: ${pong}`);
+      process.stdout.write(`redis\tPONG (${redisConfig.host ?? '127.0.0.1'}:${redisConfig.port ?? 6379})\n`);
+    } finally {
+      redis.disconnect();
+    }
   } else {
     throw new Error(`unknown DB action: ${action}`);
   }
@@ -785,23 +909,6 @@ run_rollback() {
 	printf '\nROLLBACK COMPLETE: %s (%s)\nResult: %s\n' "$old_version" "$old_commit" "$rollback_state"
 }
 
-validate_health_target() {
-	local value=$1
-	[[ -z "$value" ]] && return 0
-	case "$value" in
-		*"$PRODUCTION_IPV4"*|*"$PRODUCTION_IPV6"*|http://takusuki.com|http://takusuki.com/*|https://takusuki.com|https://takusuki.com/*)
-			fail "Production health target is forbidden: $value"
-			;;
-	esac
-}
-
-validate_health_target "$HEALTH_LOCAL_URL"
-validate_health_target "$HEALTH_API_URL"
-validate_health_target "$HEALTH_LAN_URL"
-validate_health_target "$HEALTH_PUBLIC_URL"
-validate_health_target "$BUNDLE_URL"
-validate_health_target "$BUNDLE_SHA_URL"
-
 init_colors
 if (( INTERACTIVE == 1 )); then interactive_menu; fi
 
@@ -845,6 +952,7 @@ esac
 
 declare -A PATCH_ID PATCH_DESCRIPTION PATCH_REQUIRED PATCH_INTRODUCED PATCH_UPSTREAM PATCH_SHA PATCH_ADDED
 declare -a SERIES
+declare -a PATCH_MANAGED_PATHS
 
 load_patch_metadata() {
 	[[ -r "$SERIES_FILE" ]] || fail "series missing: $SERIES_FILE"
@@ -879,6 +987,100 @@ load_patch_metadata() {
 }
 
 load_patch_metadata
+
+collect_patch_managed_paths() {
+	local patch path existing
+	PATCH_MANAGED_PATHS=()
+	for patch in "${SERIES[@]}"; do
+		while IFS= read -r path; do
+			[[ -n "$path" && "$path" != '/dev/null' ]] || continue
+			existing=0
+			local known
+			for known in "${PATCH_MANAGED_PATHS[@]}"; do [[ "$known" == "$path" ]] && existing=1; done
+			((existing == 1)) || PATCH_MANAGED_PATHS+=("$path")
+		done < <(awk '/^(---|\+\+\+) [ab]\// { value=$2; sub(/^[ab]\//, "", value); print value }' "$PATCH_DIR/$patch")
+	done
+}
+
+managed_path_known() {
+	local candidate=$1 path
+	[[ "$candidate" == 'packages/frontend/assets/unknown.png' ]] && return 0
+	for path in "${PATCH_MANAGED_PATHS[@]}"; do [[ "$path" == "$candidate" ]] && return 0; done
+	return 1
+}
+
+managed_state_digest() {
+	local root=$1 path
+	for path in "${PATCH_MANAGED_PATHS[@]}"; do
+		if [[ -L "$root/$path" ]]; then
+			printf 'L\t%s\t%s\n' "$path" "$(readlink "$root/$path")"
+		elif [[ -f "$root/$path" ]]; then
+			printf 'F\t%s\t%s\n' "$path" "$(sha256sum "$root/$path" | awk '{print $1}')"
+		elif [[ -e "$root/$path" ]]; then
+			printf 'X\t%s\n' "$path"
+		else
+			printf 'A\t%s\n' "$path"
+		fi
+	done | sha256sum | awk '{print $1}'
+}
+
+classify_current_source() {
+	step 'Classify current official base and managed patch state'
+	local current_commit official_ref modified path work expected actual index match=-1
+	current_commit=$(as_misskey git -C "$MISSKEY_DIR" rev-parse HEAD)
+	official_ref=$(as_misskey git -C "$MISSKEY_DIR" for-each-ref --format='%(refname)' --contains "$current_commit" refs/remotes/origin refs/tags | sed -n '1p')
+	[[ -n "$official_ref" ]] || fail "current commit is not reachable from a fetched official ref: $current_commit"
+	while IFS= read -r modified; do
+		[[ -n "$modified" ]] || continue
+		managed_path_known "$modified" || fail "unknown tracked source modification; preserve/review it before updating: $modified"
+		if [[ "$modified" == 'packages/frontend/assets/unknown.png' ]]; then
+			[[ -f "$MISSKEY_DIR/$modified" && "$(sha256sum "$MISSKEY_DIR/$modified" | awk '{print $1}')" == "$ASSET_ACTUAL" ]] \
+				|| fail 'existing unknown.png differs from the managed canonical asset'
+		fi
+	done < <(as_misskey git -C "$MISSKEY_DIR" diff --name-only HEAD --)
+
+	if [[ "$current_commit" != "$TARGET_COMMIT" ]]; then
+		as_misskey git -C "$MISSKEY_DIR" diff --quiet HEAD -- || fail 'different-version source has tracked modifications; automatic conversion is unsupported'
+		for path in "${PATCH_MANAGED_PATHS[@]}"; do
+			if ! as_misskey git -C "$MISSKEY_DIR" ls-files --error-unmatch -- "$path" >/dev/null 2>&1 && [[ -e "$MISSKEY_DIR/$path" ]]; then
+				fail "different-version source has a managed untracked path: $path"
+			fi
+		done
+		SOURCE_PATCH_COUNT=0
+		SOURCE_STATE='different-official-version-clean'
+		printf 'Source state: %s (%s via %s)\n' "$SOURCE_STATE" "$current_commit" "$official_ref"
+		return
+	fi
+
+	work=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-update3-state.XXXXXXXX")
+	if (( EUID == 0 )); then chown "$MISSKEY_USER":"$(id -gn "$MISSKEY_USER")" "$work"; fi
+	as_misskey git -C "$MISSKEY_DIR" worktree add --detach "$work/tree" "$current_commit" >/dev/null
+	actual=$(managed_state_digest "$MISSKEY_DIR")
+	for ((index=0; index<=${#SERIES[@]}; index++)); do
+		expected=$(managed_state_digest "$work/tree")
+		[[ "$actual" == "$expected" ]] && match=$index
+		if ((index < ${#SERIES[@]})); then
+			as_misskey git -C "$work/tree" apply --whitespace=error-all "$PATCH_DIR/${SERIES[index]}" || {
+				as_misskey git -C "$MISSKEY_DIR" worktree remove --force "$work/tree" >/dev/null 2>&1 || true
+				rm -rf -- "$work"
+				fail "current-base patch series cannot be classified at ${SERIES[index]}"
+			}
+		fi
+	done
+	as_misskey git -C "$MISSKEY_DIR" worktree remove --force "$work/tree" >/dev/null
+	rm -rf -- "$work"
+	((match >= 0)) || fail 'managed source paths do not match any supported contiguous patch state'
+	SOURCE_PATCH_COUNT=$match
+	case "$match" in
+		0) SOURCE_STATE='official-unpatched' ;;
+		3) SOURCE_STATE='001-010-020-applied' ;;
+		4) SOURCE_STATE='001-010-020-030-applied' ;;
+		*) SOURCE_STATE="supported-prefix-${match}-applied" ;;
+	esac
+	printf 'Source state: %s (%d/%d patches)\n' "$SOURCE_STATE" "$SOURCE_PATCH_COUNT" "${#SERIES[@]}"
+}
+
+collect_patch_managed_paths
 
 step 'Validate canonical asset'
 [[ -s "$ASSET_FILE" ]] || fail "asset missing or empty: $ASSET_FILE"
@@ -938,6 +1140,8 @@ esac
 printf 'Resolved target: %s (%s)\n' "$TARGET_LABEL" "$TARGET_COMMIT"
 CURRENT_VERSION=$(current_version)
 TARGET_VERSION=$(as_misskey git -C "$MISSKEY_DIR" show "$TARGET_COMMIT:package.json" | node -e "let s=''; process.stdin.on('data', c => s += c).on('end', () => process.stdout.write(JSON.parse(s).version ?? 'UNKNOWN'))")
+[[ "$TARGET_VERSION" == "$BUNDLE_TARGET_VERSION" ]] || fail "bundle is validated only for Misskey $BUNDLE_TARGET_VERSION, not $TARGET_VERSION"
+[[ "$TARGET_COMMIT" == "$BUNDLE_TARGET_COMMIT" ]] || fail "bundle is validated only for official commit $BUNDLE_TARGET_COMMIT"
 CHANGE_DIRECTION='non-release'
 if [[ "$CURRENT_VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ && "$TARGET_VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]; then
 	if [[ "$CURRENT_VERSION" == "$TARGET_VERSION" ]]; then
@@ -999,12 +1203,20 @@ if (( PATCH_ONLY == 1 )); then
 	exit 0
 fi
 
+classify_current_source
+
 step 'Runtime preflight'
 command -v node >/dev/null || fail 'node missing'
 command -v corepack >/dev/null || fail 'corepack missing'
 command -v git >/dev/null || fail 'git missing'
 command -v curl >/dev/null || fail 'curl missing'
 command -v file >/dev/null || fail 'file missing'
+[[ -r /etc/os-release ]] || fail '/etc/os-release missing'
+# shellcheck disable=SC1091
+source /etc/os-release
+[[ "${ID:-}" == 'ubuntu' ]] || fail "unsupported OS: ${ID:-UNKNOWN}; this release supports Ubuntu"
+ARCHITECTURE=$(dpkg --print-architecture 2>/dev/null || uname -m)
+case "$ARCHITECTURE" in amd64|arm64|x86_64|aarch64) : ;; *) fail "unsupported architecture: $ARCHITECTURE" ;; esac
 AVAILABLE_KB=$(df -Pk "$MISSKEY_DIR" | awk 'NR == 2 { print $4 }')
 (( AVAILABLE_KB >= MIN_FREE_KB )) || fail "insufficient disk: ${AVAILABLE_KB}KiB available, ${MIN_FREE_KB}KiB required"
 printf 'Node=%s pnpm=%s free_kib=%s\n' "$(node --version)" "$ACTUAL_PNPM" "$AVAILABLE_KB"
@@ -1013,6 +1225,23 @@ if (( REQUIRE_ENV_FILE == 1 )); then
 fi
 systemctl cat "$SERVICE_NAME" >/dev/null || fail "systemd service missing: $SERVICE_NAME"
 [[ -r "$MISSKEY_DIR/.config/default.yml" ]] || fail '.config/default.yml missing'
+SERVICE_USER=$(systemctl show -p User --value "$SERVICE_NAME")
+SERVICE_WORKDIR=$(systemctl show -p WorkingDirectory --value "$SERVICE_NAME")
+[[ -z "$SERVICE_USER" || "$SERVICE_USER" == "$MISSKEY_USER" ]] || fail "systemd user mismatch: $SERVICE_USER != $MISSKEY_USER"
+[[ -z "$SERVICE_WORKDIR" || "$(realpath -e "$SERVICE_WORKDIR")" == "$MISSKEY_DIR" ]] || fail "systemd working directory mismatch: $SERVICE_WORKDIR"
+mapfile -t DB_DIAGNOSTICS < <(db_node diagnostics)
+((${#DB_DIAGNOSTICS[@]} == 5)) || fail 'PostgreSQL/PGroonga/Redis diagnostics failed'
+printf 'OS=%s architecture=%s service=%s PostgreSQL/PGroonga/migrations connected\n' \
+	"${PRETTY_NAME:-Ubuntu}" "$ARCHITECTURE" "$SERVICE_NAME"
+printf '  %s\n' "${DB_DIAGNOSTICS[@]}"
+UNTRACKED_COUNT=$(as_misskey git -C "$MISSKEY_DIR" ls-files --others --exclude-standard | wc -l)
+printf 'Source=%s untracked_preserved=%s rollback_state=%s\n' "$SOURCE_STATE" "$UNTRACKED_COUNT" "$STATE_DIR"
+
+if (( SOURCE_PATCH_COUNT == ${#SERIES[@]} )) && [[ "$(as_misskey git -C "$MISSKEY_DIR" rev-parse HEAD)" == "$TARGET_COMMIT" ]]; then
+	printf 'ALREADY APPLIED: official %s@%s with all %d managed patches. No reset, build, migration, or service restart was performed.\n' \
+		"$TARGET_VERSION" "$TARGET_COMMIT" "${#SERIES[@]}"
+	exit 0
+fi
 
 if (( CHECK_ONLY == 1 )); then
 	printf 'DRY RUN COMPLETE: no service stop, patch application, build, migration, or restart occurred.\n'
@@ -1063,12 +1292,21 @@ OLD_VERSION=$(node -e "process.stdout.write(require(process.argv[1]).version)" "
 	printf 'asset_sha256\t%s\n' "$ASSET_ACTUAL"
 	printf 'default_yml_sha256\t%s\n' "$(sha256sum "$MISSKEY_DIR/.config/default.yml" | awk '{print $1}')"
 	printf 'systemd_unit_sha256\t%s\n' "$(systemctl cat "$SERVICE_NAME" --no-pager | sha256sum | awk '{print $1}')"
+	printf 'bundle_release_id\t%s\n' "$BUNDLE_RELEASE_ID"
+	printf 'bundle_target_version\t%s\n' "$BUNDLE_TARGET_VERSION"
+	printf 'bundle_target_commit\t%s\n' "$BUNDLE_TARGET_COMMIT"
+	printf 'source_state\t%s\n' "$SOURCE_STATE"
 	if [[ -n "${POSTGRESQL_CONF:-}" && -r "$POSTGRESQL_CONF" ]]; then
 		printf 'postgresql_conf_sha256\t%s\n' "$(sha256sum "$POSTGRESQL_CONF" | awk '{print $1}')"
 	else
 		printf 'postgresql_conf_sha256\tUNAVAILABLE\n'
 	fi
 } > "$BACKUP_DIR/metadata.tsv"
+install -m 0600 "$MISSKEY_DIR/.config/default.yml" "$BACKUP_DIR/default.yml"
+systemctl cat "$SERVICE_NAME" --no-pager > "$BACKUP_DIR/systemd-unit.txt"
+chmod 0600 "$BACKUP_DIR/systemd-unit.txt"
+if [[ -r /root/.misskey.env ]]; then install -m 0600 /root/.misskey.env "$BACKUP_DIR/root-misskey.env"; fi
+if [[ -r "$USER_ENV_FILE" ]]; then install -m 0600 "$USER_ENV_FILE" "$BACKUP_DIR/user-misskey.env"; fi
 cp "$SERIES_FILE" "$MANIFEST_FILE" "$BACKUP_DIR/"
 if [[ -f "$STATE_DIR/current-patch-manifest.tsv" && -f "$STATE_DIR/current-patch-series" ]]; then
 	cp "$STATE_DIR/current-patch-manifest.tsv" "$BACKUP_DIR/pre-update-patch-manifest.tsv"
@@ -1090,6 +1328,8 @@ db_node ledger > "$BACKUP_DIR/pre-update-migrations.tsv"
 sha256sum "$BACKUP_DIR/pre-update-migrations.tsv" | awk '{ print $1 }' > "$BACKUP_DIR/pre-update-migrations.sha256"
 chmod 0600 "$BACKUP_DIR"/*
 
+step 'Final no-return checkpoint: all compatibility, recovery, DB, Redis, disk, and source-state checks passed'
+printf 'The next step stops %s. Recovery metadata: %s\n' "$SERVICE_NAME" "$BACKUP_DIR"
 step 'Stop service after all compatibility checks pass'
 UPDATE_STARTED_EPOCH=$(date +%s)
 SERVICE_STOP_EPOCH=$UPDATE_STARTED_EPOCH

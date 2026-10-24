@@ -5,7 +5,7 @@ umask 022
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
 readonly SOURCE="$ROOT/bundle/takusuki-update3-bundle"
-readonly EXPECTED_SHA256='63915baca799a8f87cffd4819d0c848b49822d36c0d38c8f7e6adcec0927c3b5'
+readonly EXPECTED_SHA256='7b68d319e1b98938de80f56348839937809bfd9f4acc66fe2cb33eec99c11742'
 readonly OUTPUT_DIR="${1:-$ROOT/dist}"
 
 [[ -d "$SOURCE" ]] || { printf 'Missing bundle source: %s\n' "$SOURCE" >&2; exit 1; }
@@ -48,7 +48,13 @@ for line_no, line in enumerate(manifest.read_text(encoding='utf-8').splitlines()
         raise SystemExit(f'manifest mismatch: {rel}')
     listed.add(rel)
 
-if meta.get('bundle_version') != '1' or meta.get('minimum_updater_version') != '4.0.0':
+if (
+    meta.get('bundle_version') != '1'
+    or meta.get('minimum_updater_version') != '4.1.0'
+    or meta.get('release_id') != '4.1.0'
+    or meta.get('target_misskey_version') != '2026.10.0'
+    or meta.get('target_official_commit') != 'de89118a225fbe0833e42ab94e8d5af1e5211208'
+):
     raise SystemExit('unsupported bundle metadata')
 actual = {
     p.relative_to(source).as_posix()

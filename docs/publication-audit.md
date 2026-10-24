@@ -1,53 +1,40 @@
-# GitHub publication audit — v4.0.0
+# Publication audit — Takusuki Update3 v4.1.0
 
-Audit date: 2026-08-16
+Audit date: 2026-10-25 (JST)
 
-## Verified artifacts
+## Release identity
 
-- Updater SHA-256: `a121db5ab1ef3d834f8cf3f49909318b3a6736eb3e0dc608acca7a6c71a9aa5f`
-- Bundle SHA-256: `be3c5a0846bd36313b5292193a8c947e6913f0d4c3ee150d34e609b3f5d0e7de`
-- Repository updater is byte-identical to the Live Staging artifact.
-- `scripts/build-bundle.sh` produces a byte-identical ZIP from repository source.
-- Bundle manifest inventory、individual SHA-256/size、ZIP CRC、path/type checks: PASS
+- Updater: `4.1.0`
+- Misskey: `2026.10.0`
+- Official commit: `de89118a225fbe0833e42ab94e8d5af1e5211208`
+- Updater SHA-256: `4fc9af956091e5f5dbf4c156fabde6b56826aa12f6f8f969760a9110e18a2e39`
+- Bundle SHA-256: `7b68d319e1b98938de80f56348839937809bfd9f4acc66fe2cb33eec99c11742`
 
-## Secret audit
+`scripts/build-bundle.sh`による独立した2回の生成はbyte-identicalでした。ZIP CRC、path/type、
+bundle/patch manifest、個別SHA-256/size、README local link、ShellCheck、秘密情報patternはPASSです。
 
-**PASS**
+## Compatibility gate
 
-commit予定fileをprivate-key header、GitHub/AWS token形式、Bearer/Authorization値、
-`DATABASE_URL`実値、password/secret/token関連語、environment file名、高entropy候補で検査した。
+隔離worktreeと専用一時PostgreSQL DBで次を再実行しました。
 
-reviewした語彙一致:
+- official remote/tag/exact commit: PASS
+- migration inventory: 変更0
+- 001/010/020/030の順次適用: PASS
+- frozen pnpm 11.25.0 install: PASS
+- unit/integration test: 25/25 PASS、skip 0
+- SPDX: PASS
+- Misskey full build: PASS
+- PGroonga 4.1.0 API evidence: 28/28、mismatch 0
 
-- `process.env.EXP003_DATABASE_URL`: integration test用の環境変数名だけで値なし
-- `db.pass` / `PGPASSWORD`: runtimeでtrusted Misskey configから子processへ渡すcodeで実値なし
-- `.misskey.env` / `/root/.misskey.env`: runtime探索pathだけでfile内容なし
-- SECURITY/README/verification script内のsecurity用語と検出pattern: documentation/codeのみ
-- 64桁hex値: SHA-256 digestのみ
+## Secret and operational metadata audit
 
-次の禁止物は存在しない。
+private key、GitHub/AWS token、Bearer value、database URL実値、`.env`、DB dump、runtime log、
+SSH credential、SMTP/Cloudflare credentialは含みません。旧updaterにあったProduction固定IPと
+固定local username前提は削除しました。`/root/.misskey.env`は任意のtrusted config探索pathとして
+のみ記載し、内容は含みません。
 
-- `.env`、`.misskey.env`、実環境`default.yml`
-- DB dump、PostgreSQL backup、runtime log
-- SSH/private key
-- GitHub/Cloudflare/SMTP credential、API token、cookie、session value
-- `~/.config/gh/hosts.yml`またはCodex credential
+## Asset and license audit
 
-## Operational metadata audit
-
-exact updater内に次の値が存在する。
-
-- Production IPv4 denylist literal: `192.168.100.29`
-- Production IPv6 denylist literal: `2400:4051:b900:7400:250:56ff:fe22:664c`
-- trusted configuration候補path: `/root/.misskey.env`
-
-IP literalはcredentialではなく、Production endpointをbundle/health targetに指定した場合に
-拒否する安全制御である。public sourceからinternal addressingが判明する点は認識済みだが、
-Live Staging検証済みexact updater SHAを維持するため変更していない。Staging IP、DB password、
-token、internal hostname、実環境config/log/backupは含まれない。
-
-## License audit
-
-**PASS.** 結果は[`license-audit.md`](license-audit.md)を参照。updater/helperとTakusuki
-original `unknown.png`はMIT、Misskey-derived patchはAGPL-3.0-only。`unknown.png`は
-copyright holder本人により2026-08-16にasamiのoriginal workであることが確認済みである。
+4 patchが参照するsourceとbuild assetを静的監査し、外部追加配置が必要なのはありません。
+`unknown.png`はbundle内に同梱し、`blank.png`は不要です。updater/helperとoriginal assetはMIT、
+Misskey-derived 4 patchはAGPL-3.0-onlyです。

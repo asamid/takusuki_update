@@ -180,27 +180,47 @@ if [[ "$MODE" == 'full' && "$OVERALL" == 'PASS' ]]; then
 		record_step frozen_install FAIL 'frozen install failed'; OVERALL='FAIL'
 	fi
 
-	if [[ "$OVERALL" == 'PASS' ]] && (cd "$WORKTREE/packages/backend" && corepack "pnpm@$EXPECTED_PNPM" exec vitest run \
-		src/core/chart/charts/federation-blocked-host-query.test.ts \
-		src/core/chart/charts/federation-blocked-host-query.integration.test.ts \
-		src/misc/note-blocked-host-query.test.ts) >"$OUTPUT_DIR/logs/targeted-tests.log" 2>&1 \
-		&& grep -Eq 'Tests[[:space:]]+25 passed \(25\)' "$OUTPUT_DIR/logs/targeted-tests.log" \
-		&& ! grep -Eq '[1-9][0-9]* skipped' "$OUTPUT_DIR/logs/targeted-tests.log"; then
-		record_step targeted_tests PASS '25 managed-patch tests'
+	if [[ "$OVERALL" == 'PASS' ]]; then
+		if (cd "$WORKTREE/packages/backend" && corepack "pnpm@$EXPECTED_PNPM" exec vitest run \
+			src/core/chart/charts/federation-blocked-host-query.test.ts \
+			src/core/chart/charts/federation-blocked-host-query.integration.test.ts \
+			src/misc/note-blocked-host-query.test.ts) >"$OUTPUT_DIR/logs/targeted-tests.log" 2>&1 \
+			&& python3 - "$OUTPUT_DIR/logs/targeted-tests.log" <<'PY'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace')
+text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+if not re.search(r'Tests\s+25 passed\s+\(25\)', text):
+    raise SystemExit('missing exact 25/25 Vitest summary')
+if re.search(r'[1-9][0-9]* skipped', text):
+    raise SystemExit('one or more tests were skipped')
+PY
+		then
+			record_step targeted_tests PASS '25 managed-patch tests'
+		else
+			record_step targeted_tests FAIL 'targeted tests failed'; OVERALL='FAIL'
+		fi
 	else
-		record_step targeted_tests FAIL 'targeted tests failed'; OVERALL='FAIL'
+		record_step targeted_tests SKIP 'prior full-validation step failed'
 	fi
 
-	if [[ "$OVERALL" == 'PASS' ]] && (cd "$WORKTREE" && node scripts/check-spdx.mjs) >"$OUTPUT_DIR/logs/spdx.log" 2>&1; then
-		record_step spdx PASS 'SPDX check passed'
+	if [[ "$OVERALL" == 'PASS' ]]; then
+		if (cd "$WORKTREE" && node scripts/check-spdx.mjs) >"$OUTPUT_DIR/logs/spdx.log" 2>&1; then
+			record_step spdx PASS 'SPDX check passed'
+		else
+			record_step spdx FAIL 'SPDX check failed'; OVERALL='FAIL'
+		fi
 	else
-		record_step spdx FAIL 'SPDX check failed'; OVERALL='FAIL'
+		record_step spdx SKIP 'prior full-validation step failed'
 	fi
 
-	if [[ "$OVERALL" == 'PASS' ]] && (cd "$WORKTREE" && corepack "pnpm@$EXPECTED_PNPM" build) >"$OUTPUT_DIR/logs/build.log" 2>&1; then
-		record_step full_build PASS 'pnpm build passed'
+	if [[ "$OVERALL" == 'PASS' ]]; then
+		if (cd "$WORKTREE" && corepack "pnpm@$EXPECTED_PNPM" build) >"$OUTPUT_DIR/logs/build.log" 2>&1; then
+			record_step full_build PASS 'pnpm build passed'
+		else
+			record_step full_build FAIL 'full build failed'; OVERALL='FAIL'
+		fi
 	else
-		record_step full_build FAIL 'full build failed'; OVERALL='FAIL'
+		record_step full_build SKIP 'prior full-validation step failed'
 	fi
 
 	if python3 - "$API_EQUIVALENCE" "$API_PERFORMANCE" <<'PY'
