@@ -4,8 +4,8 @@ umask 077
 
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
-readonly EXPECTED_UPDATER_SHA256='a121db5ab1ef3d834f8cf3f49909318b3a6736eb3e0dc608acca7a6c71a9aa5f'
-readonly EXPECTED_BUNDLE_SHA256='f1d69fcbdf292a42062f60d83917ad1c82504b28964d98c13711ebd4122372d5'
+readonly EXPECTED_UPDATER_SHA256='4fc9af956091e5f5dbf4c156fabde6b56826aa12f6f8f969760a9110e18a2e39'
+readonly EXPECTED_BUNDLE_SHA256='7b68d319e1b98938de80f56348839937809bfd9f4acc66fe2cb33eec99c11742'
 BUILD_DIR=$(mktemp -d /tmp/takusuki-update3-verify.XXXXXXXX)
 trap 'rm -rf -- "$BUILD_DIR"' EXIT
 
@@ -18,7 +18,9 @@ command -v shellcheck >/dev/null || {
 }
 
 bash -n "$ROOT/takusuki_update3.sh"
-shellcheck "$ROOT/takusuki_update3.sh" "$ROOT/scripts/build-bundle.sh" "$0"
+shellcheck "$ROOT/takusuki_update3.sh" "$ROOT/scripts/build-bundle.sh" \
+	"$ROOT/scripts/check-update-compatibility.sh" "$ROOT/scripts/prepare-release-assets.sh" \
+	"$ROOT/scripts/publish-web-release.sh" "$0"
 
 updater_sha256=$(sha256sum "$ROOT/takusuki_update3.sh" | awk '{print $1}')
 [[ "$updater_sha256" == "$EXPECTED_UPDATER_SHA256" ]] || {

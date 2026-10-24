@@ -1,0 +1,137 @@
+diff --git a/packages/backend/src/core/QueryService.ts b/packages/backend/src/core/QueryService.ts
+index 34810059da..12e0c03471 100644
+--- a/packages/backend/src/core/QueryService.ts
++++ b/packages/backend/src/core/QueryService.ts
+@@ -10,6 +10,7 @@ import type { MiUser } from '@/models/User.js';
+ import type { UserProfilesRepository, FollowingsRepository, ChannelFollowingsRepository, BlockingsRepository, NoteThreadMutingsRepository, MutingsRepository, RenoteMutingsRepository, MiMeta } from '@/models/_.js';
+ import { bindThis } from '@/decorators.js';
+ import { IdService } from '@/core/IdService.js';
++import { buildNoteBlockedHostQuery } from '@/misc/note-blocked-host-query.js';
+ import type { SelectQueryBuilder } from 'typeorm';
+ 
+ @Injectable()
+@@ -328,8 +329,9 @@ export class QueryService {
+ 		if (this.meta.blockedHosts.length === 0) {
+ 			nonBlockedHostQuery = () => '1=1';
+ 		} else {
+-			nonBlockedHostQuery = (match: string) => `${match} NOT ILIKE ALL(ARRAY[:...blocked])`;
+-			q.setParameters({ blocked: this.meta.blockedHosts.flatMap(x => [x, `%.${x}`]) });
++			const blockedHostQuery = buildNoteBlockedHostQuery(this.meta.blockedHosts);
++			nonBlockedHostQuery = blockedHostQuery.nonBlockedHostExpression;
++			q.setParameters(blockedHostQuery.parameters);
+ 		}
+ 
+ 		if (excludeAuthor) {
+diff --git a/packages/backend/src/misc/note-blocked-host-query.test.ts b/packages/backend/src/misc/note-blocked-host-query.test.ts
+new file mode 100644
+index 0000000000..733a08770f
+--- /dev/null
++++ b/packages/backend/src/misc/note-blocked-host-query.test.ts
+@@ -0,0 +1,51 @@
++/*
++ * SPDX-FileCopyrightText: syuilo and misskey-project
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++import { describe, expect, test } from 'vitest';
++import { buildNoteBlockedHostQuery } from './note-blocked-host-query.js';
++
++describe(buildNoteBlockedHostQuery, () => {
++	test('keeps literal domains on the suffix equality path', () => {
++		const query = buildNoteBlockedHostQuery(['EXAMPLE.COM', 'sub.example.net']);
++
++		expect(query.parameters).toEqual({
++			blockedHostLiterals: ['example.com', 'sub.example.net'],
++			blockedHostPatterns: [],
++		});
++		expect(query.nonBlockedHostExpression('note.userHost')).toContain('= ANY(CAST(:blockedHostLiterals AS text[]))');
++	});
++
++	test('preserves PostgreSQL wildcard rules on the ILIKE path', () => {
++		const query = buildNoteBlockedHostQuery(['wild_.example', 'percent%.example']);
++
++		expect(query.parameters).toEqual({
++			blockedHostLiterals: [],
++			blockedHostPatterns: [
++				'wild_.example',
++				'%.wild_.example',
++				'percent%.example',
++				'%.percent%.example',
++			],
++		});
++	});
++
++	test('uses two reusable array parameters instead of spread parameters', () => {
++		const query = buildNoteBlockedHostQuery(Array.from({ length: 3471 }, (_, index) => `blocked-${index}.example`));
++		const expression = query.nonBlockedHostExpression('note.renoteUserHost');
++
++		expect(expression).not.toContain(':...');
++		expect(expression.match(/:blockedHostLiterals/g)).toHaveLength(1);
++		expect(expression.match(/:blockedHostPatterns/g)).toHaveLength(1);
++		expect(Object.keys(query.parameters)).toHaveLength(2);
++	});
++
++	test('correlates suffix generation to the selected note host column', () => {
++		const expression = buildNoteBlockedHostQuery(['example.com'])
++			.nonBlockedHostExpression('note.replyUserHost');
++
++		expect(expression).toContain("string_to_array(lower(note.replyUserHost), '.')");
++		expect(expression).toContain('note.replyUserHost NOT ILIKE ALL');
++	});
++});
+diff --git a/packages/backend/src/misc/note-blocked-host-query.ts b/packages/backend/src/misc/note-blocked-host-query.ts
+new file mode 100644
+index 0000000000..ce61f069ae
+--- /dev/null
++++ b/packages/backend/src/misc/note-blocked-host-query.ts
+@@ -0,0 +1,50 @@
++/*
++ * SPDX-FileCopyrightText: syuilo and misskey-project
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++export type NoteBlockedHostQuery = {
++	parameters: {
++		blockedHostLiterals: string[];
++		blockedHostPatterns: string[];
++	};
++	nonBlockedHostExpression: (hostExpression: string) => string;
++};
++
++/**
++ * Builds the blocked-host part of note queries without expanding every rule
++ * into thousands of positional parameters.
++ *
++ * Literal DNS rules are matched against the candidate host's suffixes. Rules
++ * containing PostgreSQL ILIKE metacharacters stay on the ILIKE path so the
++ * existing SQL semantics for `%` and `_` are preserved.
++ */
++export function buildNoteBlockedHostQuery(blockedHosts: readonly string[]): NoteBlockedHostQuery {
++	const blockedHostLiterals: string[] = [];
++	const blockedHostPatterns: string[] = [];
++
++	for (const blockedHost of blockedHosts) {
++		if (blockedHost.includes('%') || blockedHost.includes('_')) {
++			blockedHostPatterns.push(blockedHost, `%.${blockedHost}`);
++		} else {
++			blockedHostLiterals.push(blockedHost.toLowerCase());
++		}
++	}
++
++	return {
++		parameters: {
++			blockedHostLiterals,
++			blockedHostPatterns,
++		},
++		nonBlockedHostExpression: (hostExpression: string) => `NOT EXISTS (
++	SELECT 1
++	FROM (SELECT string_to_array(lower(${hostExpression}), '.') AS parts) blocked_host_parts
++	CROSS JOIN LATERAL generate_subscripts(blocked_host_parts.parts, 1) AS blocked_host_position(value)
++	WHERE array_to_string(
++		blocked_host_parts.parts[blocked_host_position.value:array_length(blocked_host_parts.parts, 1)],
++		'.'
++	) = ANY(CAST(:blockedHostLiterals AS text[]))
++)
++	AND ${hostExpression} NOT ILIKE ALL(CAST(:blockedHostPatterns AS text[]))`,
++	};
++}

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+## 4.1.0 - 2026-10-25
+
+- 公式stable tagへのmanaged patch互換性、migration差分、frozen build、対象テスト、
+  API証拠をfail-closedで判定し、JSON/Markdownを生成する検証スクリプトを追加。
+- `030-note-blocked-host-query-optimization.patch`をmanaged patch seriesへ追加
+- 3,471 blocked hostsのNote SQLを約156KB/20,826 bindから約1.3KB/2 bindへ縮小
+- 合成Stagingの中央値: 6,222.0msから32.2ms、結果集合差分0
+- Misskey 2026.9.0および2026.10.0への001/010/020/030連続適用: PASS
+- DB schema/migration変更なし
+- bundleへ対象Misskey 2026.10.0と公式commitを固定
+- 既知patch prefix、全適用済み、未知source差分を停止前に分類
+- Ubuntu/systemd/source/Node/pnpm/PostgreSQL/PGroonga/Redis/migration/diskを自動検出・検証
+- 4ファイルのRelease生成とWeb固定領域・原子切替scriptを追加
+- Production: このrelease作業では未反映
+
 ## Runtime bundle update — 2026-09-03
 
 - Gallery create/updateの1投稿あたりfile上限を32から256へ拡張

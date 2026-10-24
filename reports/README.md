@@ -1,4 +1,14 @@
-# Gallery 256 reports
+# Takusuki Update reports
+
+## Note blocked-host performance
+
+- [Note blocked-host query optimization candidate](note-blocked-host-optimization.md): root cause,
+  candidate 030 design, Misskey 2026.10.0 PGroonga API validation, compatibility and remaining
+  Production gate.
+- [v4.1.0 Staging release validation](v4.1.0-staging-release-validation.md): distributed artifact
+  application, same-version rerun, rollback/reapply, invariants and observed PGroonga 4.0.1 timeout.
+
+## Gallery 256
 
 These reports preserve the Gallery 256 investigation and release history in chronological order.
 
