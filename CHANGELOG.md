@@ -4,6 +4,8 @@
 
 - 030のblocked-host解除・追加・再解除・再追加、subdomain、reply/renote、設定復元、
   任意のsystemd無再起動確認を将来更新でも再実行できる回帰スクリプトとして追加。
+- v4.1.0の固定Web領域と通常4 URLを原子切替で公開し、Cloudflare purge後の再取得、
+  SHA-256、ZIP/manifest、標準URL経路のStaging preflightを検証。
 
 ## 4.1.0 - 2026-10-25
 
