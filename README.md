@@ -219,6 +219,24 @@ SHA-256、entry count、PostgreSQL versionを検証・記録し、失敗したpa
 ./scripts/verify-release.sh
 ```
 
+将来の公式stable更新は、Productionではなく隔離された検証ホストで、公式tag・commitと
+全managed patchの互換性を先に判定します。`--full`はfrozen lockfile install、対象テスト、
+SPDX、full buildに加え、隔離ラボで生成したAPI等価性・性能JSONも検証します。判定は
+`release-decision.json`と`release-decision.md`へ同時に保存され、patch競合や上流取込候補を
+自動解決せず`FAIL`または`BLOCKED`で停止します。
+
+```bash
+./scripts/check-update-compatibility.sh \
+  --source /path/to/official-misskey-clone \
+  --tag 2026.10.0 \
+  --expected-commit de89118a225fbe0833e42ab94e8d5af1e5211208 \
+  --from-ref HEAD \
+  --full \
+  --api-equivalence /path/to/api-equivalence.json \
+  --api-performance /path/to/api-performance.json \
+  --output-dir /path/to/compatibility-result
+```
+
 この検証はupdater SHA、deterministic bundle、ZIP、manifest、secret pattern、READMEの
 local linksを検証し、Misskey hostへは接続しません。Gallery 256のrelease履歴は
 [reports index](reports/README.md)を参照してください。

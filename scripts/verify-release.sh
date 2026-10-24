@@ -18,7 +18,8 @@ command -v shellcheck >/dev/null || {
 }
 
 bash -n "$ROOT/takusuki_update3.sh"
-shellcheck "$ROOT/takusuki_update3.sh" "$ROOT/scripts/build-bundle.sh" "$0"
+shellcheck "$ROOT/takusuki_update3.sh" "$ROOT/scripts/build-bundle.sh" \
+	"$ROOT/scripts/check-update-compatibility.sh" "$0"
 
 updater_sha256=$(sha256sum "$ROOT/takusuki_update3.sh" | awk '{print $1}')
 [[ "$updater_sha256" == "$EXPECTED_UPDATER_SHA256" ]] || {

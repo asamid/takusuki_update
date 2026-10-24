@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- 公式stable tagへのmanaged patch互換性、migration差分、frozen build、対象テスト、
+  API証拠をfail-closedで判定し、JSON/Markdownを生成する検証スクリプトを追加。
+
 ## Candidate runtime bundle — 2026-10-24
 
 - `030-note-blocked-host-query-optimization.patch`をmanaged patch seriesへ追加
