@@ -178,6 +178,18 @@ branch/commit指定は`--advanced`が必要です。ただし4.1.0 bundleは2026
 migration差分、全patch、frozen install、対象test、SPDX、full build、API等価性・性能証拠がPASSした後、
 bundle metadataとhashを新releaseとして更新します。
 
+030の動的追従は、外部通信を遮断したbaseline/candidate APIと専用管理者tokenを用意して次を実行します。
+対象hostの解除、追加、再解除、再追加をAPI経由で行い、exact/subdomain/deep subdomain、reply、renoteの
+検索結果、設定復元、指定時はsystemdの無再起動をfail-closedで確認します。token値は結果へ出力しません。
+
+```bash
+BASELINE_URL=http://127.0.0.1:3101 \
+CANDIDATE_URL=http://127.0.0.1:3102 \
+BASELINE_SERVICE=misskey-baseline.service \
+CANDIDATE_SERVICE=misskey-candidate.service \
+node scripts/test-blocked-host-transition.mjs ./private-test-tokens.json ./block-transition.json
+```
+
 ```bash
 EXP003_DATABASE_URL="$ISOLATED_DATABASE_URL" \
 ./scripts/check-update-compatibility.sh \

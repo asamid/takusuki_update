@@ -11,6 +11,7 @@ trap 'rm -rf -- "$BUILD_DIR"' EXIT
 
 command -v bash >/dev/null
 command -v python3 >/dev/null
+command -v node >/dev/null
 command -v sha256sum >/dev/null
 command -v shellcheck >/dev/null || {
 	printf 'ShellCheck is required.\n' >&2
@@ -18,6 +19,7 @@ command -v shellcheck >/dev/null || {
 }
 
 bash -n "$ROOT/takusuki_update3.sh"
+node --check "$ROOT/scripts/test-blocked-host-transition.mjs"
 shellcheck "$ROOT/takusuki_update3.sh" "$ROOT/scripts/build-bundle.sh" \
 	"$ROOT/scripts/check-update-compatibility.sh" "$ROOT/scripts/prepare-release-assets.sh" \
 	"$ROOT/scripts/publish-web-release.sh" "$0"
