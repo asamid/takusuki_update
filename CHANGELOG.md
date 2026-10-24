@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 2026.10.0＋001/010/020/030のProduction適用後を読み取り専用で観測し、実ログ上の
+  Note検索SQL縮小、API、timeout、CPU、parallel worker、連合block状態と残存課題を記録。
 - 030のblocked-host解除・追加・再解除・再追加、subdomain、reply/renote、設定復元、
   任意のsystemd無再起動確認を将来更新でも再実行できる回帰スクリプトとして追加。
 - v4.1.0の固定Web領域と通常4 URLを原子切替で公開し、Cloudflare purge後の再取得、
