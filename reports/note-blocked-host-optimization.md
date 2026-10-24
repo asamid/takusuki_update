@@ -69,6 +69,12 @@ Twenty-eight functional API comparisons covering host suffixes, case, Unicode/Pu
 mismatches. Removing and re-adding a blocked host produced the same state transitions in both
 trees. The full build passed in both trees; the combined 010/030 targeted suite passed 25/25.
 
+The reusable regression runner is `scripts/test-blocked-host-transition.mjs`. It exercises
+unblocked -> blocked -> unblocked -> blocked transitions through `admin/update-meta`, compares
+baseline and candidate Note Search results for exact/subdomain/deep-subdomain/reply/renote cases,
+restores the original block list in a `finally` path, and can assert unchanged systemd start and
+restart counters without printing the administrator token.
+
 ## Compatibility and release validation
 
 - 001 -> 010 -> 020 -> 030 applies cleanly to official Misskey 2026.9.0: PASS.
