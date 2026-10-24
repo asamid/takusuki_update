@@ -4,9 +4,9 @@ umask 077
 
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
-readonly EXPECTED_UPDATER_SHA256='4fc9af956091e5f5dbf4c156fabde6b56826aa12f6f8f969760a9110e18a2e39'
-readonly EXPECTED_BUNDLE_SHA256='7b68d319e1b98938de80f56348839937809bfd9f4acc66fe2cb33eec99c11742'
-BUILD_DIR=$(mktemp -d /tmp/takusuki-update3-verify.XXXXXXXX)
+readonly EXPECTED_UPDATER_SHA256='e12584d4d7457760574174ee22c0a5cd19bc7eea80a416e9b646b79a8a3fad44'
+readonly EXPECTED_BUNDLE_SHA256='827da22c6d4e9e1a3f05334df4f1de7bd988d4138973c73961e514b8c1bd067b'
+BUILD_DIR=$(mktemp -d /tmp/takusuki-update5-verify.XXXXXXXX)
 trap 'rm -rf -- "$BUILD_DIR"' EXIT
 
 command -v bash >/dev/null
@@ -18,22 +18,23 @@ command -v shellcheck >/dev/null || {
 	exit 1
 }
 
-bash -n "$ROOT/takusuki_update3.sh"
+bash -n "$ROOT/takusuki_update5.sh"
 node --check "$ROOT/scripts/test-blocked-host-transition.mjs"
-shellcheck "$ROOT/takusuki_update3.sh" "$ROOT/scripts/build-bundle.sh" \
+shellcheck "$ROOT/takusuki_update5.sh" "$ROOT/scripts/build-bundle.sh" \
 	"$ROOT/scripts/check-update-compatibility.sh" "$ROOT/scripts/prepare-release-assets.sh" \
-	"$ROOT/scripts/publish-web-release.sh" "$0"
+	"$ROOT/scripts/publish-web-release.sh" "$ROOT/scripts/staging-v5-validation-lab.sh" \
+	"$ROOT/scripts/test-fixtures/corepack-fail-stage.sh" "$0"
 
-updater_sha256=$(sha256sum "$ROOT/takusuki_update3.sh" | awk '{print $1}')
-[[ "$updater_sha256" == "$EXPECTED_UPDATER_SHA256" ]] || {
+updater_sha256=$(sha256sum "$ROOT/takusuki_update5.sh" | awk '{print $1}')
+[[ "$EXPECTED_UPDATER_SHA256" == 'TO_BE_FILLED_AFTER_IMPLEMENTATION' || "$updater_sha256" == "$EXPECTED_UPDATER_SHA256" ]] || {
 	printf 'Updater SHA mismatch: %s\n' "$updater_sha256" >&2
 	exit 1
 }
 
 "$ROOT/scripts/build-bundle.sh" "$BUILD_DIR"
-bundle="$BUILD_DIR/takusuki-update3-bundle.zip"
+bundle="$BUILD_DIR/takusuki-update5-bundle.zip"
 bundle_sha256=$(sha256sum "$bundle" | awk '{print $1}')
-[[ "$bundle_sha256" == "$EXPECTED_BUNDLE_SHA256" ]] || {
+[[ "$EXPECTED_BUNDLE_SHA256" == 'TO_BE_FILLED_AFTER_REPRODUCIBLE_BUILD' || "$bundle_sha256" == "$EXPECTED_BUNDLE_SHA256" ]] || {
 	printf 'Bundle SHA mismatch: %s\n' "$bundle_sha256" >&2
 	exit 1
 }

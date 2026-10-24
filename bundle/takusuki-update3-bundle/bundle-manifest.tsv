@@ -1,9 +1,9 @@
-META	bundle_version	1
+META	bundle_version	2
 META	generated_at	2026-10-24T00:00:00+00:00
-META	minimum_updater_version	4.1.0
-META	release_id	4.1.0
-META	target_misskey_version	2026.10.0
-META	target_official_commit	de89118a225fbe0833e42ab94e8d5af1e5211208
+META	minimum_updater_version	5.0.0
+META	release_id	5.0.0
+META	compatibility_reference_version	2026.10.0
+META	compatibility_reference_commit	de89118a225fbe0833e42ab94e8d5af1e5211208
 FILE	assets/unknown.png	ac918e92451687bac2c17a139eb2528fd450c2b4dfcc169caae7442d88889c0f	875
 FILE	assets/unknown.png.sha256	395f2f979ef07ae9e28bea04a5b02f915f241dfde233285bcefc1a840d2619f5	78
 FILE	misskey-patches/001-max-note-text-length.patch	981b736023ee3f9c55d30a2bd595c0f557d913840debf14e987db6d8ddbb81e8	472

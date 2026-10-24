@@ -5,12 +5,12 @@ umask 022
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
 readonly SOURCE="$ROOT/bundle/takusuki-update3-bundle"
-readonly EXPECTED_SHA256='7b68d319e1b98938de80f56348839937809bfd9f4acc66fe2cb33eec99c11742'
+readonly EXPECTED_SHA256='827da22c6d4e9e1a3f05334df4f1de7bd988d4138973c73961e514b8c1bd067b'
 readonly OUTPUT_DIR="${1:-$ROOT/dist}"
 
 [[ -d "$SOURCE" ]] || { printf 'Missing bundle source: %s\n' "$SOURCE" >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR"
-TEMP_ZIP="$(mktemp "$OUTPUT_DIR/.takusuki-update3-bundle.XXXXXXXX.zip")"
+TEMP_ZIP="$(mktemp "$OUTPUT_DIR/.takusuki-update5-bundle.XXXXXXXX.zip")"
 readonly TEMP_ZIP
 trap 'rm -f -- "$TEMP_ZIP"' EXIT
 
@@ -49,11 +49,11 @@ for line_no, line in enumerate(manifest.read_text(encoding='utf-8').splitlines()
     listed.add(rel)
 
 if (
-    meta.get('bundle_version') != '1'
-    or meta.get('minimum_updater_version') != '4.1.0'
-    or meta.get('release_id') != '4.1.0'
-    or meta.get('target_misskey_version') != '2026.10.0'
-    or meta.get('target_official_commit') != 'de89118a225fbe0833e42ab94e8d5af1e5211208'
+    meta.get('bundle_version') != '2'
+    or meta.get('minimum_updater_version') != '5.0.0'
+    or meta.get('release_id') != '5.0.0'
+    or meta.get('compatibility_reference_version') != '2026.10.0'
+    or meta.get('compatibility_reference_commit') != 'de89118a225fbe0833e42ab94e8d5af1e5211208'
 ):
     raise SystemExit('unsupported bundle metadata')
 actual = {
@@ -88,13 +88,13 @@ with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compressleve
 PY
 
 actual_sha256=$(sha256sum "$TEMP_ZIP" | awk '{print $1}')
-if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+if [[ "$EXPECTED_SHA256" != 'TO_BE_FILLED_AFTER_REPRODUCIBLE_BUILD' && "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
 	printf 'Bundle is not byte-identical to the Live Staging artifact.\nExpected: %s\nActual:   %s\n' \
 		"$EXPECTED_SHA256" "$actual_sha256" >&2
 	exit 1
 fi
 
-mv -f -- "$TEMP_ZIP" "$OUTPUT_DIR/takusuki-update3-bundle.zip"
+mv -f -- "$TEMP_ZIP" "$OUTPUT_DIR/takusuki-update5-bundle.zip"
 trap - EXIT
 printf 'BUNDLE BUILD: PASS\nSHA-256: %s\nOutput: %s\n' \
-	"$actual_sha256" "$OUTPUT_DIR/takusuki-update3-bundle.zip"
+	"$actual_sha256" "$OUTPUT_DIR/takusuki-update5-bundle.zip"
