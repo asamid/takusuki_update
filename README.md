@@ -237,6 +237,9 @@ SPDX、full buildに加え、隔離ラボで生成したAPI等価性・性能JSO
   --output-dir /path/to/compatibility-result
 ```
 
+`--full`ではPostgreSQL integration 9件をskipさせないため、外向き通信を禁止した検証用DB
+への`EXP003_DATABASE_URL`も必須です。Production DBを指定してはいけません。
+
 この検証はupdater SHA、deterministic bundle、ZIP、manifest、secret pattern、READMEの
 local linksを検証し、Misskey hostへは接続しません。Gallery 256のrelease履歴は
 [reports index](reports/README.md)を参照してください。

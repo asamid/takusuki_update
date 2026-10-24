@@ -68,6 +68,7 @@ done
 [[ -f "$PATCH_ROOT/series" && -f "$PATCH_ROOT/patch-manifest.tsv" ]] || fail 'managed patch metadata is missing'
 if [[ "$MODE" == 'full' ]]; then
 	[[ -r "$API_EQUIVALENCE" && -r "$API_PERFORMANCE" ]] || fail '--full requires readable API equivalence and performance JSON'
+	[[ -n "${EXP003_DATABASE_URL:-}" ]] || fail '--full requires EXP003_DATABASE_URL for the PostgreSQL integration tests'
 fi
 
 SOURCE=$(cd -- "$SOURCE" && pwd -P)
@@ -182,7 +183,9 @@ if [[ "$MODE" == 'full' && "$OVERALL" == 'PASS' ]]; then
 	if [[ "$OVERALL" == 'PASS' ]] && (cd "$WORKTREE/packages/backend" && corepack "pnpm@$EXPECTED_PNPM" exec vitest run \
 		src/core/chart/charts/federation-blocked-host-query.test.ts \
 		src/core/chart/charts/federation-blocked-host-query.integration.test.ts \
-		src/misc/note-blocked-host-query.test.ts) >"$OUTPUT_DIR/logs/targeted-tests.log" 2>&1; then
+		src/misc/note-blocked-host-query.test.ts) >"$OUTPUT_DIR/logs/targeted-tests.log" 2>&1 \
+		&& grep -Eq 'Tests[[:space:]]+25 passed \(25\)' "$OUTPUT_DIR/logs/targeted-tests.log" \
+		&& ! grep -Eq '[1-9][0-9]* skipped' "$OUTPUT_DIR/logs/targeted-tests.log"; then
 		record_step targeted_tests PASS '25 managed-patch tests'
 	else
 		record_step targeted_tests FAIL 'targeted tests failed'; OVERALL='FAIL'
