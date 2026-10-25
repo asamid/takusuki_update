@@ -4,6 +4,8 @@
 
 - [v5.0.0 Staging release validation](v5.0.0-staging-release-validation.md): isolated patched and
   Vanilla upgrades, injected failures, rollback, preservation, and deterministic release checks.
+- [v5.0.0 GitHub and Web publication](v5.0.0-web-publication.md): Release assets, immutable/current
+  HTTPS publication, v4 URL preservation, public menu fetch-back, and temporary-key cleanup.
 
 ## Note blocked-host performance
 
