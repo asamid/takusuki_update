@@ -62,9 +62,10 @@ sha256sum -c takusuki-update5-bundle.zip.sha256
 chmod 0755 takusuki_update5.sh
 ```
 
-Web固定領域は`https://labo.takusuki.com/update3/releases/5.1.1/`、通常領域は
-`https://labo.takusuki.com/update3/`です。v5.0.0/v4.1.0の固定領域と、旧ファイル名の通常URLは
-変更しません。
+Web公開時の固定領域は`https://labo.takusuki.com/update3/releases/5.1.1/`、通常領域は
+`https://labo.takusuki.com/update3/`です。v5.1.1の既定bundleは公開済みGitHub固定assetを使います。
+Web originへ別途公開するまで通常領域はv5.0.0のままです。v5.0.0/v4.1.0の固定領域と、旧ファイル名の
+通常URLは変更しません。
 
 ## Patched更新
 
