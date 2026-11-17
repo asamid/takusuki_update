@@ -3,13 +3,13 @@
 Takusuki Updateは、Ubuntu/systemdの通常インストール版Misskeyへ卓すきー管理patchを
 fail-closedで適用するupdaterです。Docker/Kubernetes版は対象外です。
 
-## 正式配布版 5.0.0
+## 正式配布版 5.1.0
 
 | 項目 | 値 |
 | --- | --- |
-| Updater / bundle release | `5.0.0` |
-| 互換性参照Misskey | `2026.10.0` / `de89118a225fbe0833e42ab94e8d5af1e5211208` |
-| 2026.10.1 patch適用検査 | `PASS` / `4840fa6d576128ba916ba69169258ca177d40faf` |
+| Updater / bundle release | `5.1.0` |
+| 互換性参照Misskey | `2026.11.0` / `dd7b4905d715d2587fa2f2cb6a88ecac8878ef0d` |
+| 2026.11.0 patch適用検査 | `PASS`（001/010/020/030） |
 | 対応OS | Ubuntu amd64 / arm64、systemd、通常インストール |
 | DB schema追加 | なし |
 
@@ -52,7 +52,7 @@ Production作業ではmoving URLではなく固定Release URLを使ってくだ�
 ```bash
 install_dir=$(mktemp -d)
 cd "$install_dir"
-base=https://github.com/asamid/takusuki_update/releases/download/v5.0.0
+base=https://github.com/asamid/takusuki_update/releases/download/v5.1.0
 curl --proto '=https' --tlsv1.2 -fLO "$base/takusuki_update5.sh"
 curl --proto '=https' --tlsv1.2 -fLO "$base/takusuki_update5.sh.sha256"
 curl --proto '=https' --tlsv1.2 -fLO "$base/takusuki-update5-bundle.zip"
@@ -62,9 +62,9 @@ sha256sum -c takusuki-update5-bundle.zip.sha256
 chmod 0755 takusuki_update5.sh
 ```
 
-Web固定領域は`https://labo.takusuki.com/update3/releases/5.0.0/`、通常領域は
-`https://labo.takusuki.com/update3/`です。v4.1.0固定領域と旧ファイル名の通常URLはv4.1.0へ
-固定したまま維持します。
+Web固定領域は`https://labo.takusuki.com/update3/releases/5.1.0/`、通常領域は
+`https://labo.takusuki.com/update3/`です。v5.0.0/v4.1.0の固定領域と、旧ファイル名の通常URLは
+変更しません。
 
 ## Patched更新
 
@@ -72,14 +72,23 @@ Web固定領域は`https://labo.takusuki.com/update3/releases/5.0.0/`、通常�
 順番に適用します。CLIの推奨順序:
 
 ```bash
-sudo ./takusuki_update5.sh --tag 2026.10.1 --check-patches
-sudo ./takusuki_update5.sh --tag 2026.10.1 --check
-sudo ./takusuki_update5.sh --tag 2026.10.1 --yes
+sudo ./takusuki_update5.sh --tag 2026.11.0 --check-patches
+sudo ./takusuki_update5.sh --tag 2026.11.0 --check
+sudo ./takusuki_update5.sh --tag 2026.11.0 --yes
 ```
 
 - `--check-patches`: 公式targetの隔離worktreeで4 patchを順次検査
 - `--check`: source/runtime/DB/Redisを含むread-only preflight
 - `--yes`: install、build、migration、service、HTTP/APIまで実適用（root必須）
+
+2026.11.0以降は対象`package.json`のversionを数値比較し、公式`node ./scripts/start.mjs`へ
+systemdの起動方式を切り替えます。それより前は従来方式を維持します。updaterが管理するdrop-inは
+変更前に履歴へ保存し、rollback可能な場合は元の状態へ戻します。独自ExecStartは推測で上書きしません。
+`pnpm migrate`は独立工程のままで、起動時に`--migrate`を渡しません。
+
+2026.11.0のNode.js要件は`^24.22.3 || ^26.13.1`です。updaterは対象の
+`packages/backend/package.json`にある`engines.node`を読み、シェルとsystemd双方のNode.jsが
+満たさなければservice停止前に拒否します。
 
 参照version以外は`UNVERIFIED_TARGET_PATCH_PREFLIGHT_REQUIRED`と記録されます。patch conflict、部分状態、
 build、migration、service、healthのいずれかが失敗すれば成功扱いにしません。
@@ -95,8 +104,8 @@ sudo ./takusuki_update5.sh --stable --yes
 メニュー6または次のCLIは、正確な公式tagへ切り替え、独自patchと独自`unknown.png`を適用しません。
 
 ```bash
-sudo ./takusuki_update5.sh --vanilla --tag 2026.10.1 --check
-sudo ./takusuki_update5.sh --vanilla --tag 2026.10.1 --yes
+sudo ./takusuki_update5.sh --vanilla --tag 2026.11.0 --check
+sudo ./takusuki_update5.sh --vanilla --tag 2026.11.0 --yes
 ```
 
 更新前に既存の管理patch状態、binary diff、untracked archive、migration ledger、設定を履歴保存します。
@@ -133,9 +142,9 @@ rollbackは更新前後のmigration ledgerが同一の場合だけsource復元�
 
 ```bash
 sudo env MISSKEY_DIR=/srv/misskey MISSKEY_USER=misskey SERVICE_NAME=misskey.service \
-  ./takusuki_update5.sh --tag 2026.10.1 --check
+  ./takusuki_update5.sh --tag 2026.11.0 --check
 
-sudo ./takusuki_update5.sh --tag 2026.10.1 --advanced --yes \
+sudo ./takusuki_update5.sh --tag 2026.11.0 --advanced --yes \
   --bundle-file ./takusuki-update5-bundle.zip \
   --bundle-sha-file ./takusuki-update5-bundle.zip.sha256
 ```
@@ -148,7 +157,7 @@ branch/commit指定は`--advanced`が必要です。master resetは開発中コ�
 ./scripts/build-bundle.sh
 ./scripts/verify-release.sh
 ./scripts/prepare-release-assets.sh ./dist/release
-sudo ./scripts/publish-web-release.sh ./dist/release /var/www/trpger/labo/update3 5.0.0 4.1.0
+sudo ./scripts/publish-web-release.sh ./dist/release /var/www/trpger/labo/update3 5.1.0 4.1.0
 ```
 
 bundle生成はbyte-identicalです。公開scriptはv4.1.0固定領域を保持し、v5固定領域を作成して、

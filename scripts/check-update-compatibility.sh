@@ -86,7 +86,7 @@ record_step() {
 	printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$STEPS_FILE"
 }
 
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 cleanup() {
 	if [[ -n "$WORKTREE" && -e "$WORKTREE" ]]; then
 		git -C "$SOURCE" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true

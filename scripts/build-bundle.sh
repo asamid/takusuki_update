@@ -5,7 +5,7 @@ umask 022
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
 readonly SOURCE="$ROOT/bundle/takusuki-update3-bundle"
-readonly EXPECTED_SHA256='827da22c6d4e9e1a3f05334df4f1de7bd988d4138973c73961e514b8c1bd067b'
+readonly EXPECTED_SHA256='e21d700fb89b054f0ddf947cb14059a4c2670cfe9c25c88bfdcdedbaa0565af7'
 readonly OUTPUT_DIR="${1:-$ROOT/dist}"
 
 [[ -d "$SOURCE" ]] || { printf 'Missing bundle source: %s\n' "$SOURCE" >&2; exit 1; }
@@ -50,10 +50,10 @@ for line_no, line in enumerate(manifest.read_text(encoding='utf-8').splitlines()
 
 if (
     meta.get('bundle_version') != '2'
-    or meta.get('minimum_updater_version') != '5.0.0'
-    or meta.get('release_id') != '5.0.0'
-    or meta.get('compatibility_reference_version') != '2026.10.0'
-    or meta.get('compatibility_reference_commit') != 'de89118a225fbe0833e42ab94e8d5af1e5211208'
+    or meta.get('minimum_updater_version') != '5.1.0'
+    or meta.get('release_id') != '5.1.0'
+    or meta.get('compatibility_reference_version') != '2026.11.0'
+    or meta.get('compatibility_reference_commit') != 'dd7b4905d715d2587fa2f2cb6a88ecac8878ef0d'
 ):
     raise SystemExit('unsupported bundle metadata')
 actual = {
@@ -88,7 +88,7 @@ with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compressleve
 PY
 
 actual_sha256=$(sha256sum "$TEMP_ZIP" | awk '{print $1}')
-if [[ "$EXPECTED_SHA256" != 'TO_BE_FILLED_AFTER_REPRODUCIBLE_BUILD' && "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
 	printf 'Bundle is not byte-identical to the Live Staging artifact.\nExpected: %s\nActual:   %s\n' \
 		"$EXPECTED_SHA256" "$actual_sha256" >&2
 	exit 1

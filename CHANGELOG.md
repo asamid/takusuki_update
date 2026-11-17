@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.1.0 - 2026-11-18
+
+- Misskey 2026.11.0以降の起動を公式`node ./scripts/start.mjs`へ切り替えるsystemd drop-in管理を追加
+- 対象versionの数値比較、`start.mjs`存在確認、既知ExecStartだけの安全な変換を実装
+- `NODE_OPTIONS`、Node CLIメモリoption、既存unitのType/User/WorkingDirectory/Environmentを維持
+- 対象`packages/backend/package.json`のNode.js engineを読み、shell/systemd双方でfail-closed検査
+- `--check`はsystemd変更予定と検証結果を表示するだけで、unit/service/DBを変更しない
+- migration-aware rollbackでv5.1管理drop-inの更新前状態を復元
+- 2026.11.0（`dd7b4905d715d2587fa2f2cb6a88ecac8878ef0d`）へ4 patchの連続適用を確認
+
 ## 5.0.0 - 2026-10-25
 
 - bundleのMisskey version/commit固定拒否を廃止し、互換性参照情報へ変更

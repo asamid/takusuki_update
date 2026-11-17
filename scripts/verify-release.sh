@@ -4,8 +4,8 @@ umask 077
 
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
-readonly EXPECTED_UPDATER_SHA256='e12584d4d7457760574174ee22c0a5cd19bc7eea80a416e9b646b79a8a3fad44'
-readonly EXPECTED_BUNDLE_SHA256='827da22c6d4e9e1a3f05334df4f1de7bd988d4138973c73961e514b8c1bd067b'
+readonly EXPECTED_UPDATER_SHA256='ec8e066db2aa1729f745881259dcc484dbf0a61fefb36615e45dba569a85b0a3'
+readonly EXPECTED_BUNDLE_SHA256='e21d700fb89b054f0ddf947cb14059a4c2670cfe9c25c88bfdcdedbaa0565af7'
 BUILD_DIR=$(mktemp -d /tmp/takusuki-update5-verify.XXXXXXXX)
 trap 'rm -rf -- "$BUILD_DIR"' EXIT
 
@@ -23,10 +23,14 @@ node --check "$ROOT/scripts/test-blocked-host-transition.mjs"
 shellcheck "$ROOT/takusuki_update5.sh" "$ROOT/scripts/build-bundle.sh" \
 	"$ROOT/scripts/check-update-compatibility.sh" "$ROOT/scripts/prepare-release-assets.sh" \
 	"$ROOT/scripts/publish-web-release.sh" "$ROOT/scripts/staging-v5-validation-lab.sh" \
-	"$ROOT/scripts/test-fixtures/corepack-fail-stage.sh" "$0"
+	"$ROOT/scripts/test-fixtures/corepack-fail-stage.sh" "$ROOT/scripts/test-v5.1-runtime.sh" \
+	"$ROOT/scripts/test-v5.1-target.sh" "$0"
+
+"$ROOT/scripts/test-v5.1-runtime.sh"
+"$ROOT/scripts/test-v5.1-target.sh"
 
 updater_sha256=$(sha256sum "$ROOT/takusuki_update5.sh" | awk '{print $1}')
-[[ "$EXPECTED_UPDATER_SHA256" == 'TO_BE_FILLED_AFTER_IMPLEMENTATION' || "$updater_sha256" == "$EXPECTED_UPDATER_SHA256" ]] || {
+[[ "$updater_sha256" == "$EXPECTED_UPDATER_SHA256" ]] || {
 	printf 'Updater SHA mismatch: %s\n' "$updater_sha256" >&2
 	exit 1
 }
@@ -34,7 +38,7 @@ updater_sha256=$(sha256sum "$ROOT/takusuki_update5.sh" | awk '{print $1}')
 "$ROOT/scripts/build-bundle.sh" "$BUILD_DIR"
 bundle="$BUILD_DIR/takusuki-update5-bundle.zip"
 bundle_sha256=$(sha256sum "$bundle" | awk '{print $1}')
-[[ "$EXPECTED_BUNDLE_SHA256" == 'TO_BE_FILLED_AFTER_REPRODUCIBLE_BUILD' || "$bundle_sha256" == "$EXPECTED_BUNDLE_SHA256" ]] || {
+[[ "$bundle_sha256" == "$EXPECTED_BUNDLE_SHA256" ]] || {
 	printf 'Bundle SHA mismatch: %s\n' "$bundle_sha256" >&2
 	exit 1
 }

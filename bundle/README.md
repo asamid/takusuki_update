@@ -46,14 +46,14 @@ same-version deploymentとして適用済みです。
 
 ## Release identity
 
-Release IDとMisskey versionは分離しています。5.0.0 format 2 bundleは対象を拒否する固定値ではなく、
+Release IDとMisskey versionは分離しています。5.1.0 format 2 bundleは対象を拒否する固定値ではなく、
 深い互換性証拠が存在する参照version/commitを記録します。
 
 ```text
-release_id: 5.0.0
-compatibility_reference_version: 2026.10.0
-compatibility_reference_commit: de89118a225fbe0833e42ab94e8d5af1e5211208
-bundle_sha256: 827da22c6d4e9e1a3f05334df4f1de7bd988d4138973c73961e514b8c1bd067b
+release_id: 5.1.0
+compatibility_reference_version: 2026.11.0
+compatibility_reference_commit: dd7b4905d715d2587fa2f2cb6a88ecac8878ef0d
+bundle_sha256: e21d700fb89b054f0ddf947cb14059a4c2670cfe9c25c88bfdcdedbaa0565af7
 ```
 異なる公式tagにもpatch適用を試せますが、参照version外は未検証targetとして記録されます。
 

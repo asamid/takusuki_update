@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Purpose: Interactive and non-interactive, reproducible, fail-closed Misskey operations.
 # Author: asami / Takusuki operations (implementation prepared with Codex)
-# Version: 5.0.0
-# Changelog: v5 removes the per-version bundle gate, adds Vanilla tag updates,
-# and records target compatibility separately from bundle integrity.
+# Version: 5.1.0
+# Changelog: v5.1 adds Node.js engine enforcement and version-aware systemd
+# startup management for Misskey 2026.11.0 and later.
 # Safety design: preflight and patch checks run before downtime; required failures stop the update.
 # Patch/asset source: verified bundle downloaded from labo.takusuki.com.
 # Expected environment: systemd deployment, official misskey-dev/misskey Git remote, Node/Corepack/pnpm.
@@ -11,7 +11,8 @@
 set -Eeuo pipefail
 umask 077
 
-readonly UPDATER_VERSION='5.0.0'
+readonly UPDATER_VERSION='5.1.0'
+readonly START_MJS_VERSION='2026.11.0'
 readonly DEFAULT_BUNDLE_URL='https://labo.takusuki.com/update3/takusuki-update5-bundle.zip'
 readonly DEFAULT_BUNDLE_SHA_URL='https://labo.takusuki.com/update3/takusuki-update5-bundle.zip.sha256'
 
@@ -50,6 +51,16 @@ BUNDLE_REFERENCE_COMMIT=''
 TARGET_COMPATIBILITY_STATUS=''
 SOURCE_PATCH_COUNT=''
 SOURCE_STATE=''
+TARGET_NODE_ENGINE=''
+TARGET_START_STYLE=''
+SERVICE_START_STYLE=''
+SERVICE_NODE_PATH=''
+SYSTEMD_PLAN_ACTION='none'
+SYSTEMD_PLAN_SUMMARY=''
+SYSTEMD_MANAGED_DROPIN=''
+SYSTEMD_DROPIN_CONTENT=''
+declare -a SERVICE_EXEC_PREFIX=()
+declare -a SERVICE_NODE_OPTIONS=()
 
 # Values supplied by the invoking administrator take precedence over legacy
 # environment files. This is required for isolated Staging instances that must
@@ -443,6 +454,251 @@ ui_header() {
 
 current_version() {
 	node -e 'try { process.stdout.write(require(process.argv[1]).version ?? "UNKNOWN"); } catch { process.stdout.write("UNKNOWN"); }' "$MISSKEY_DIR/package.json" 2>/dev/null || printf 'UNKNOWN'
+}
+
+release_version_ge() {
+	local left=$1 right=$2
+	[[ "$left" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 2
+	local -a lhs=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+	[[ "$right" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 2
+	local -a rhs=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+	local index
+	for index in 0 1 2; do
+		((10#${lhs[index]} > 10#${rhs[index]})) && return 0
+		((10#${lhs[index]} < 10#${rhs[index]})) && return 1
+	done
+	return 0
+}
+
+node_satisfies_engine() {
+	local executable=$1 engine=$2 actual
+	actual=$($executable --version 2>/dev/null) || return 1
+	node - "$actual" "$engine" <<'NODE'
+const actualText = process.argv[2];
+const range = process.argv[3];
+const parse = value => {
+	const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(value);
+	if (!match) throw new Error(`unsupported version: ${value}`);
+	return match.slice(1).map(Number);
+};
+const compare = (a, b) => {
+	for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+	return 0;
+};
+const satisfiesComparator = (version, token) => {
+	let match = /^(>=|<=|>|<|=)?v?(\d+\.\d+\.\d+)$/.exec(token);
+	if (match) {
+		const result = compare(version, parse(match[2]));
+		switch (match[1] ?? '=') {
+			case '>=': return result >= 0;
+			case '<=': return result <= 0;
+			case '>': return result > 0;
+			case '<': return result < 0;
+			case '=': return result === 0;
+		}
+	}
+	match = /^\^v?(\d+\.\d+\.\d+)$/.exec(token);
+	if (match) {
+		const minimum = parse(match[1]);
+		const maximum = minimum[0] > 0 ? [minimum[0] + 1, 0, 0]
+			: minimum[1] > 0 ? [0, minimum[1] + 1, 0] : [0, 0, minimum[2] + 1];
+		return compare(version, minimum) >= 0 && compare(version, maximum) < 0;
+	}
+	throw new Error(`unsupported engine comparator: ${token}`);
+};
+try {
+	const version = parse(actualText);
+	const alternatives = range.split('||').map(part => part.trim()).filter(Boolean);
+	if (alternatives.length === 0) throw new Error('empty Node.js engine range');
+	const matched = alternatives.some(part => {
+		const tokens = part.split(/\s+/).filter(Boolean);
+		return tokens.length > 0 && tokens.every(token => satisfiesComparator(version, token));
+	});
+	process.exit(matched ? 0 : 1);
+} catch (error) {
+	console.error(error.message);
+	process.exit(2);
+}
+NODE
+}
+
+systemd_quote_arg() {
+	local value=$1
+	value=${value//\\/\\\\}
+	value=${value//\"/\\\"}
+	value=${value//%/%%}
+	printf '"%s"' "$value"
+}
+
+read_service_exec_argv() {
+	local raw
+	raw=$(systemctl show -p ExecStart --value "$SERVICE_NAME") || fail "cannot inspect ExecStart: $SERVICE_NAME"
+	[[ -n "$raw" ]] || fail "systemd ExecStart is empty: $SERVICE_NAME"
+	mapfile -t SERVICE_EXEC_ARGV < <(python3 - "$raw" <<'PY'
+import re
+import shlex
+import sys
+
+raw = sys.argv[1]
+match = re.search(r'(?:^|;\s*)argv\[\]=(.*?)(?:\s*;\s*(?:ignore_errors|start_time|stop_time|pid|code|status)=|\s*}$)', raw)
+if not match:
+    raise SystemExit('unsupported systemctl ExecStart serialization')
+for value in shlex.split(match.group(1)):
+    if '\n' in value or '\r' in value:
+        raise SystemExit('newline in ExecStart argument')
+    print(value)
+PY
+	)
+	((${#SERVICE_EXEC_ARGV[@]} > 0)) || fail 'could not parse the effective systemd ExecStart'
+}
+
+resolve_service_start() {
+	read_service_exec_argv
+	local index=0 command base argument entry_index=-1
+	SERVICE_EXEC_PREFIX=()
+	SERVICE_NODE_OPTIONS=()
+	if [[ "${SERVICE_EXEC_ARGV[0]}" == */env || "${SERVICE_EXEC_ARGV[0]}" == env ]]; then
+		SERVICE_EXEC_PREFIX+=("${SERVICE_EXEC_ARGV[0]}")
+		index=1
+		while ((index < ${#SERVICE_EXEC_ARGV[@]})) && [[ "${SERVICE_EXEC_ARGV[index]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
+			SERVICE_EXEC_PREFIX+=("${SERVICE_EXEC_ARGV[index]}")
+			((index += 1))
+		done
+	fi
+	((index < ${#SERVICE_EXEC_ARGV[@]})) || fail 'effective ExecStart has no executable'
+	command=${SERVICE_EXEC_ARGV[index]}
+	base=${command##*/}
+	case "$base" in
+		npm|pnpm)
+			if ((index + 2 == ${#SERVICE_EXEC_ARGV[@]})) && [[ "${SERVICE_EXEC_ARGV[index + 1]}" == 'start' ]]; then :
+			elif ((index + 3 == ${#SERVICE_EXEC_ARGV[@]})) && [[ "${SERVICE_EXEC_ARGV[index + 1]}" == 'run' && "${SERVICE_EXEC_ARGV[index + 2]}" == 'start' ]]; then :
+			else fail 'unknown npm/pnpm ExecStart; refusing to infer a replacement'; fi
+		SERVICE_START_STYLE='legacy'
+		if [[ "$command" == /* && -x "${command%/*}/node" ]]; then
+			SERVICE_NODE_PATH=$(readlink -f "${command%/*}/node")
+		else
+			SERVICE_NODE_PATH=$(readlink -f "$(command -v node)")
+		fi
+		;;
+		node)
+		SERVICE_NODE_PATH=$(readlink -f "$command" 2>/dev/null || true)
+		[[ -x "$SERVICE_NODE_PATH" ]] || fail "systemd Node.js executable is unavailable: $command"
+		for ((entry_index=index + 1; entry_index<${#SERVICE_EXEC_ARGV[@]}; entry_index++)); do
+			argument=${SERVICE_EXEC_ARGV[entry_index]}
+			case "$argument" in
+				./scripts/start.mjs|scripts/start.mjs) SERVICE_START_STYLE='start.mjs'; break ;;
+				./packages/backend/built/entry.js|packages/backend/built/entry.js) SERVICE_START_STYLE='legacy'; break ;;
+			esac
+		done
+		[[ "$entry_index" -lt "${#SERVICE_EXEC_ARGV[@]}" ]] || fail 'unknown direct Node.js ExecStart entry point'
+		((entry_index + 1 == ${#SERVICE_EXEC_ARGV[@]})) || fail 'unknown arguments after the Misskey entry point'
+		for ((index=index + 1; index<entry_index; index++)); do
+			[[ "${SERVICE_EXEC_ARGV[index]}" != '--migrate' ]] || fail 'ExecStart must not contain --migrate'
+			SERVICE_NODE_OPTIONS+=("${SERVICE_EXEC_ARGV[index]}")
+		done
+		;;
+	*)
+		fail "unknown systemd ExecStart executable ($base); refusing to overwrite a custom service"
+		;;
+	esac
+	[[ "$SERVICE_NODE_PATH" == /* && -x "$SERVICE_NODE_PATH" ]] || fail 'could not resolve an absolute systemd Node.js executable'
+}
+
+build_systemd_start_plan() {
+	local service_type dropin_dir token command_line='ExecStart='
+	[[ "$SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+\.service$ ]] || fail 'unsafe systemd service name'
+	SYSTEMD_MANAGED_DROPIN="/etc/systemd/system/$SERVICE_NAME.d/zz-takusuki-update5-start.conf"
+	service_type=$(systemctl show -p Type --value "$SERVICE_NAME")
+	case "$service_type" in simple|exec|notify) : ;; *) fail "unsupported systemd service Type: $service_type" ;; esac
+	resolve_service_start
+	if release_version_ge "$TARGET_VERSION" "$START_MJS_VERSION"; then
+		TARGET_START_STYLE='start.mjs'
+		as_misskey git -C "$MISSKEY_DIR" cat-file -e "$TARGET_COMMIT:scripts/start.mjs" 2>/dev/null \
+			|| fail "target $TARGET_VERSION requires scripts/start.mjs but the file is absent"
+		if [[ "$SERVICE_START_STYLE" == 'start.mjs' ]]; then
+			SYSTEMD_PLAN_ACTION='none'
+			SYSTEMD_PLAN_SUMMARY="effective ExecStart already uses $SERVICE_NODE_PATH ./scripts/start.mjs"
+			return
+		fi
+		for token in "${SERVICE_EXEC_PREFIX[@]}" "$SERVICE_NODE_PATH" "${SERVICE_NODE_OPTIONS[@]}" './scripts/start.mjs'; do
+			command_line+=" $(systemd_quote_arg "$token")"
+		done
+		SYSTEMD_DROPIN_CONTENT=$'[Service]\nExecStart=\n'"$command_line"$'\n'
+		SYSTEMD_PLAN_ACTION='write'
+		SYSTEMD_PLAN_SUMMARY="install managed drop-in for $SERVICE_NODE_PATH ./scripts/start.mjs"
+	else
+		TARGET_START_STYLE='legacy'
+		if [[ "$SERVICE_START_STYLE" == 'legacy' ]]; then
+			SYSTEMD_PLAN_ACTION='none'
+			SYSTEMD_PLAN_SUMMARY='retain the effective legacy start command'
+		elif [[ -f "$SYSTEMD_MANAGED_DROPIN" ]]; then
+			SYSTEMD_PLAN_ACTION='remove'
+			SYSTEMD_PLAN_SUMMARY='remove the v5.1 managed drop-in and restore the prior legacy command'
+		else
+			fail 'target requires legacy startup but the current start.mjs command is not managed by this updater'
+		fi
+	fi
+	if [[ "$SYSTEMD_PLAN_ACTION" == 'write' ]]; then
+		dropin_dir=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-systemd-verify.XXXXXXXX")
+		printf '[Unit]\nDescription=Takusuki updater generated command validation\n%s' "$SYSTEMD_DROPIN_CONTENT" > "$dropin_dir/verify.service"
+		systemd-analyze verify "$dropin_dir/verify.service" >/dev/null 2>&1 \
+			|| fail 'generated systemd drop-in did not pass systemd-analyze verify'
+		rm -rf -- "$dropin_dir"
+	fi
+}
+
+backup_systemd_managed_state() {
+	local state_file="$BACKUP_DIR/systemd-managed-dropin.state"
+	if [[ -f "$SYSTEMD_MANAGED_DROPIN" ]]; then
+		printf 'PRESENT\t%s\n' "$SYSTEMD_MANAGED_DROPIN" > "$state_file"
+		install -m 0600 "$SYSTEMD_MANAGED_DROPIN" "$BACKUP_DIR/systemd-managed-dropin.conf"
+	else
+		printf 'ABSENT\t%s\n' "$SYSTEMD_MANAGED_DROPIN" > "$state_file"
+	fi
+	chmod 0600 "$state_file"
+}
+
+apply_systemd_start_plan() {
+	local directory temporary
+	case "$SYSTEMD_PLAN_ACTION" in
+		none) printf 'systemd startup: no unit change required\n' ;;
+		write)
+			directory=${SYSTEMD_MANAGED_DROPIN%/*}
+			install -d -o root -g root -m 0755 "$directory"
+			temporary=$(mktemp "$directory/.zz-takusuki-update5-start.XXXXXXXX")
+			printf '%s' "$SYSTEMD_DROPIN_CONTENT" > "$temporary"
+			chmod 0644 "$temporary"
+			mv -f -- "$temporary" "$SYSTEMD_MANAGED_DROPIN"
+			;;
+		remove) rm -f -- "$SYSTEMD_MANAGED_DROPIN" ;;
+		*) fail "invalid systemd plan action: $SYSTEMD_PLAN_ACTION" ;;
+	esac
+	if [[ "$SYSTEMD_PLAN_ACTION" != 'none' ]]; then
+		systemctl daemon-reload
+		systemd-analyze verify "$SERVICE_NAME" >/dev/null 2>&1 || fail 'systemd verification failed after managed drop-in change'
+	fi
+}
+
+restore_systemd_managed_state() {
+	local state_file=$1 state path directory temporary
+	[[ -f "$state_file" ]] || return 0
+	IFS=$'\t' read -r state path < "$state_file"
+	[[ "$path" == "/etc/systemd/system/$SERVICE_NAME.d/zz-takusuki-update5-start.conf" ]] \
+		|| fail 'rollback systemd state contains an unexpected path'
+	case "$state" in
+		PRESENT)
+			[[ -f "$BACKUP_DIR/systemd-managed-dropin.conf" ]] || fail 'rollback systemd drop-in backup is missing'
+			directory=${path%/*}
+			install -d -o root -g root -m 0755 "$directory"
+			temporary=$(mktemp "$directory/.zz-takusuki-update5-rollback.XXXXXXXX")
+			install -m 0644 "$BACKUP_DIR/systemd-managed-dropin.conf" "$temporary"
+			mv -f -- "$temporary" "$path"
+			;;
+		ABSENT) rm -f -- "$path" ;;
+		*) fail 'rollback systemd state is invalid' ;;
+	esac
+	systemctl daemon-reload
+	systemd-analyze verify "$SERVICE_NAME" >/dev/null 2>&1 || fail 'systemd verification failed after rollback restoration'
 }
 
 interactive_menu() {
@@ -950,6 +1206,10 @@ run_rollback() {
 	old_commit=$(awk -F '\t' '$1 == "old_commit" { print $2 }' "$BACKUP_DIR/metadata.tsv")
 	old_version=$(awk -F '\t' '$1 == "old_version" { print $2 }' "$BACKUP_DIR/metadata.tsv")
 	[[ "$old_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'rollback metadata has invalid old commit'
+	SYSTEMD_MANAGED_DROPIN="/etc/systemd/system/$SERVICE_NAME.d/zz-takusuki-update5-start.conf"
+	if [[ ! -f "$BACKUP_DIR/systemd-managed-dropin.state" && -e "$SYSTEMD_MANAGED_DROPIN" ]]; then
+		fail 'selected history predates systemd state capture while a v5.1 managed drop-in is active'
+	fi
 	printf 'Rollback target: %s (%s)\nMigration ledger: IDENTICAL\n' "$old_version" "$old_commit"
 	confirm_yes 'この履歴へrollbackしますか？' || { printf 'Cancelled.\n'; return 0; }
 	step 'Stop service for rollback'
@@ -970,6 +1230,8 @@ run_rollback() {
 	as_misskey env CI=true NODE_ENV=production corepack "pnpm@$expected_pnpm" --dir "$MISSKEY_DIR" run build
 	db_node ledger > "$current_ledger"
 	cmp -s "$expected_ledger" "$current_ledger" || fail 'migration ledger changed during rollback build'
+	step 'Restore pre-update systemd start state'
+	restore_systemd_managed_state "$BACKUP_DIR/systemd-managed-dropin.state"
 	step 'Start and validate rollback target'
 	systemctl start "$SERVICE_NAME"
 	run_health_checks
@@ -1226,6 +1488,16 @@ printf 'Current version: %s\nTarget version : %s\nDirection      : %s\nUpdate mo
 	"$CURRENT_VERSION" "$TARGET_VERSION" "$CHANGE_DIRECTION" "${UPDATE_FLAVOR^^}" "$TARGET_COMPATIBILITY_STATUS"
 EXPECTED_PNPM=$(as_misskey git -C "$MISSKEY_DIR" show "$TARGET_COMMIT:package.json" | node -e "let s=''; process.stdin.on('data', c => s += c).on('end', () => { const p=JSON.parse(s).packageManager || ''; process.stdout.write(p.startsWith('pnpm@') ? p.slice(5) : ''); });")
 [[ -n "$EXPECTED_PNPM" ]] || fail 'package.json has no pnpm packageManager'
+if release_version_ge "$TARGET_VERSION" "$START_MJS_VERSION"; then
+	TARGET_NODE_ENGINE=$(as_misskey git -C "$MISSKEY_DIR" show "$TARGET_COMMIT:packages/backend/package.json" \
+		| node -e "let s=''; process.stdin.on('data', c => s += c).on('end', () => process.stdout.write(JSON.parse(s).engines?.node ?? ''))")
+	[[ -n "$TARGET_NODE_ENGINE" ]] || fail "target $TARGET_VERSION does not declare packages/backend engines.node"
+	SHELL_NODE_PATH=$(readlink -f "$(command -v node)")
+	if ! node_satisfies_engine "$SHELL_NODE_PATH" "$TARGET_NODE_ENGINE"; then
+		fail "Node.js $($SHELL_NODE_PATH --version) does not satisfy target requirement: $TARGET_NODE_ENGINE"
+	fi
+	printf 'Node.js requirement: %s satisfies %s\n' "$($SHELL_NODE_PATH --version)" "$TARGET_NODE_ENGINE"
+fi
 
 check_patch_series() {
 	step 'Check target in an isolated official worktree'
@@ -1308,6 +1580,12 @@ SERVICE_USER=$(systemctl show -p User --value "$SERVICE_NAME")
 SERVICE_WORKDIR=$(systemctl show -p WorkingDirectory --value "$SERVICE_NAME")
 [[ -z "$SERVICE_USER" || "$SERVICE_USER" == "$MISSKEY_USER" ]] || fail "systemd user mismatch: $SERVICE_USER != $MISSKEY_USER"
 [[ -z "$SERVICE_WORKDIR" || "$(realpath -e "$SERVICE_WORKDIR")" == "$MISSKEY_DIR" ]] || fail "systemd working directory mismatch: $SERVICE_WORKDIR"
+build_systemd_start_plan
+if [[ -n "$TARGET_NODE_ENGINE" ]] && ! node_satisfies_engine "$SERVICE_NODE_PATH" "$TARGET_NODE_ENGINE"; then
+	fail "systemd Node.js $($SERVICE_NODE_PATH --version) does not satisfy target requirement: $TARGET_NODE_ENGINE"
+fi
+printf 'systemd startup plan: %s (%s; current=%s; target=%s)\n' \
+	"$SYSTEMD_PLAN_ACTION" "$SYSTEMD_PLAN_SUMMARY" "$SERVICE_START_STYLE" "$TARGET_START_STYLE"
 mapfile -t DB_DIAGNOSTICS < <(db_node diagnostics)
 ((${#DB_DIAGNOSTICS[@]} == 5)) || fail 'PostgreSQL/PGroonga/Redis diagnostics failed'
 printf 'OS=%s architecture=%s service=%s PostgreSQL/PGroonga/migrations connected\n' \
@@ -1386,6 +1664,10 @@ DEFAULT_YML_SHA=$(sha256sum "$MISSKEY_DIR/.config/default.yml" | awk '{print $1}
 	printf 'asset_install\t%s\n' "$([[ "$UPDATE_FLAVOR" == 'patched' ]] && printf MANAGED || printf SKIPPED_VANILLA)"
 	printf 'default_yml_sha256\t%s\n' "$DEFAULT_YML_SHA"
 	printf 'systemd_unit_sha256\t%s\n' "$(systemctl cat "$SERVICE_NAME" --no-pager | sha256sum | awk '{print $1}')"
+	printf 'systemd_start_style_old\t%s\n' "$SERVICE_START_STYLE"
+	printf 'systemd_start_style_new\t%s\n' "$TARGET_START_STYLE"
+	printf 'systemd_plan_action\t%s\n' "$SYSTEMD_PLAN_ACTION"
+	printf 'systemd_node\t%s\n' "$SERVICE_NODE_PATH"
 	printf 'bundle_release_id\t%s\n' "$BUNDLE_RELEASE_ID"
 	printf 'bundle_format_version\t%s\n' "$BUNDLE_FORMAT_VERSION"
 	printf 'bundle_reference_version\t%s\n' "$BUNDLE_REFERENCE_VERSION"
@@ -1401,6 +1683,7 @@ DEFAULT_YML_SHA=$(sha256sum "$MISSKEY_DIR/.config/default.yml" | awk '{print $1}
 install -m 0600 "$MISSKEY_DIR/.config/default.yml" "$BACKUP_DIR/default.yml"
 systemctl cat "$SERVICE_NAME" --no-pager > "$BACKUP_DIR/systemd-unit.txt"
 chmod 0600 "$BACKUP_DIR/systemd-unit.txt"
+backup_systemd_managed_state
 if [[ -r /root/.misskey.env ]]; then install -m 0600 /root/.misskey.env "$BACKUP_DIR/root-misskey.env"; fi
 if [[ -r "$USER_ENV_FILE" ]]; then install -m 0600 "$USER_ENV_FILE" "$BACKUP_DIR/user-misskey.env"; fi
 cp "$SERIES_FILE" "$MANIFEST_FILE" "$BACKUP_DIR/"
@@ -1488,6 +1771,9 @@ as_misskey env CI=true NODE_ENV=production corepack "pnpm@$EXPECTED_PNPM" --dir 
 step 'Run migration (fail-closed; DB backup is an independent operation)'
 MIGRATION_STARTED=1
 as_misskey env CI=true NODE_ENV=production corepack "pnpm@$EXPECTED_PNPM" --dir "$MISSKEY_DIR" run migrate
+
+step 'Apply the verified version-aware systemd start plan'
+apply_systemd_start_plan
 
 step 'Start service and perform bounded health checks'
 systemctl start "$SERVICE_NAME"
