@@ -13,13 +13,30 @@ awk '
 	capture { print }
 ' "$ROOT/takusuki_update5.sh" > "$TEST_ROOT/runtime-functions.sh"
 
+awk '
+	/^normalize_service_name\(\) \{/ { capture=1 }
+	capture { print }
+	capture && /^}/ { exit }
+' "$ROOT/takusuki_update5.sh" > "$TEST_ROOT/service-name-function.sh"
+
 fail() { printf 'EXPECTED_FAIL: %s\n' "$*" >&2; exit 91; }
 # shellcheck disable=SC1091
 source "$TEST_ROOT/runtime-functions.sh"
+# shellcheck disable=SC1091
+source "$TEST_ROOT/service-name-function.sh"
 
 assert_eq() {
 	[[ "$1" == "$2" ]] || { printf 'ASSERTION FAILED: expected <%s>, got <%s>\n' "$2" "$1" >&2; exit 1; }
 }
+
+assert_eq "$(normalize_service_name 'takusuki.com')" 'takusuki.com.service'
+assert_eq "$(normalize_service_name 'takusuki.com.service')" 'takusuki.com.service'
+assert_eq "$(normalize_service_name '../unsafe')" '../unsafe'
+if [[ "$(normalize_service_name '../unsafe')" =~ ^[A-Za-z0-9_.@-]+\.service$ ]]; then
+	fail 'unsafe service name was accepted'
+fi
+grep -Fq "releases/download/v\${UPDATER_VERSION}/takusuki-update5-bundle.zip" \
+	"$ROOT/takusuki_update5.sh" || fail 'default bundle URL is not release-pinned'
 
 release_version_ge 2026.11.0 2026.11.0
 release_version_ge 2027.1.0 2026.11.0

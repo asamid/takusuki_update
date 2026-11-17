@@ -4,8 +4,8 @@ umask 077
 
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
-readonly EXPECTED_UPDATER_SHA256='ec8e066db2aa1729f745881259dcc484dbf0a61fefb36615e45dba569a85b0a3'
-readonly EXPECTED_BUNDLE_SHA256='e21d700fb89b054f0ddf947cb14059a4c2670cfe9c25c88bfdcdedbaa0565af7'
+readonly EXPECTED_UPDATER_SHA256='1f8cc1c9c61339dbcdaca9f3e327b6018b254fda9347c3415cfb51b7535fc6e6'
+readonly EXPECTED_BUNDLE_SHA256='0fb0d5ca3338bf485ace28f6cf55f0edf1b233de1308a3216a62a8c48c003748'
 BUILD_DIR=$(mktemp -d /tmp/takusuki-update5-verify.XXXXXXXX)
 trap 'rm -rf -- "$BUILD_DIR"' EXIT
 

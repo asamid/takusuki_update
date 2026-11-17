@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: Interactive and non-interactive, reproducible, fail-closed Misskey operations.
 # Author: asami / Takusuki operations (implementation prepared with Codex)
-# Version: 5.1.0
+# Version: 5.1.1
 # Changelog: v5.1 adds Node.js engine enforcement and version-aware systemd
 # startup management for Misskey 2026.11.0 and later.
 # Safety design: preflight and patch checks run before downtime; required failures stop the update.
@@ -11,10 +11,10 @@
 set -Eeuo pipefail
 umask 077
 
-readonly UPDATER_VERSION='5.1.0'
+readonly UPDATER_VERSION='5.1.1'
 readonly START_MJS_VERSION='2026.11.0'
-readonly DEFAULT_BUNDLE_URL='https://labo.takusuki.com/update3/takusuki-update5-bundle.zip'
-readonly DEFAULT_BUNDLE_SHA_URL='https://labo.takusuki.com/update3/takusuki-update5-bundle.zip.sha256'
+readonly DEFAULT_BUNDLE_URL="https://github.com/asamid/takusuki_update/releases/download/v${UPDATER_VERSION}/takusuki-update5-bundle.zip"
+readonly DEFAULT_BUNDLE_SHA_URL="${DEFAULT_BUNDLE_URL}.sha256"
 
 MODE=''
 UPDATE_FLAVOR='patched'
@@ -369,6 +369,14 @@ detect_service_name() {
 	choose_detected_value 'systemd service' "${candidates[@]}"
 }
 
+normalize_service_name() {
+	local name=$1
+	if [[ "$name" =~ ^[A-Za-z0-9_.@-]+$ && "$name" != *.service ]]; then
+		name+='.service'
+	fi
+	printf '%s\n' "$name"
+}
+
 MISSKEY_USER=${MISSKEY_USER:-${misskey_user:-}}
 if [[ -z "${MISSKEY_DIR:-}" && -n "${misskey_directory:-}" ]]; then
 	if [[ "$misskey_directory" == /* ]]; then
@@ -396,6 +404,8 @@ restore_caller_env_overrides
 
 SERVICE_NAME=${SERVICE_NAME:-${host:-}}
 [[ -n "$SERVICE_NAME" ]] || SERVICE_NAME=$(detect_service_name)
+SERVICE_NAME=$(normalize_service_name "$SERVICE_NAME")
+[[ "$SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+\.service$ ]] || fail 'unsafe systemd service name'
 LOG_DIR=${LOG_DIR:-/var/log/takusuki-update3}
 STATE_DIR=${STATE_DIR:-/var/lib/takusuki-update3}
 BUNDLE_CACHE_DIR=${BUNDLE_CACHE_DIR:-/var/cache/takusuki-update3}

@@ -1,7 +1,7 @@
 META	bundle_version	2
 META	generated_at	2026-11-18T00:00:00+00:00
-META	minimum_updater_version	5.1.0
-META	release_id	5.1.0
+META	minimum_updater_version	5.1.1
+META	release_id	5.1.1
 META	compatibility_reference_version	2026.11.0
 META	compatibility_reference_commit	dd7b4905d715d2587fa2f2cb6a88ecac8878ef0d
 FILE	assets/unknown.png	ac918e92451687bac2c17a139eb2528fd450c2b4dfcc169caae7442d88889c0f	875

@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.1.1 - 2026-11-18
+
+- legacy環境の`host=takusuki.com`を安全に`takusuki.com.service`へ正規化し、直接実行時のpreflight失敗を修正
+- 既定bundle URLをupdaterと同じGitHub Releaseの固定assetへ変更し、古いWeb current bundleの混入を防止
+- 不正なservice名のfail-closed拒否、v5の配布名、2026.11.0対応は維持
+
 ## 5.1.0 - 2026-11-18
 
 - Misskey 2026.11.0以降の起動を公式`node ./scripts/start.mjs`へ切り替えるsystemd drop-in管理を追加

@@ -3,11 +3,11 @@
 Takusuki Updateは、Ubuntu/systemdの通常インストール版Misskeyへ卓すきー管理patchを
 fail-closedで適用するupdaterです。Docker/Kubernetes版は対象外です。
 
-## 正式配布版 5.1.0
+## 正式配布版 5.1.1
 
 | 項目 | 値 |
 | --- | --- |
-| Updater / bundle release | `5.1.0` |
+| Updater / bundle release | `5.1.1` |
 | 互換性参照Misskey | `2026.11.0` / `dd7b4905d715d2587fa2f2cb6a88ecac8878ef0d` |
 | 2026.11.0 patch適用検査 | `PASS`（001/010/020/030） |
 | 対応OS | Ubuntu amd64 / arm64、systemd、通常インストール |
@@ -52,7 +52,7 @@ Production作業ではmoving URLではなく固定Release URLを使ってくだ�
 ```bash
 install_dir=$(mktemp -d)
 cd "$install_dir"
-base=https://github.com/asamid/takusuki_update/releases/download/v5.1.0
+base=https://github.com/asamid/takusuki_update/releases/download/v5.1.1
 curl --proto '=https' --tlsv1.2 -fLO "$base/takusuki_update5.sh"
 curl --proto '=https' --tlsv1.2 -fLO "$base/takusuki_update5.sh.sha256"
 curl --proto '=https' --tlsv1.2 -fLO "$base/takusuki-update5-bundle.zip"
@@ -62,7 +62,7 @@ sha256sum -c takusuki-update5-bundle.zip.sha256
 chmod 0755 takusuki_update5.sh
 ```
 
-Web固定領域は`https://labo.takusuki.com/update3/releases/5.1.0/`、通常領域は
+Web固定領域は`https://labo.takusuki.com/update3/releases/5.1.1/`、通常領域は
 `https://labo.takusuki.com/update3/`です。v5.0.0/v4.1.0の固定領域と、旧ファイル名の通常URLは
 変更しません。
 
@@ -137,6 +137,7 @@ rollbackは更新前後のmigration ledgerが同一の場合だけsource復元�
 ## 明示設定とoffline bundle
 
 `MISSKEY_DIR`、`MISSKEY_USER`、`SERVICE_NAME`等を実行環境で指定した値は、legacy env fileより優先します。
+安全なservice省略名（例: `takusuki.com`）には`.service`を補完し、それ以外の不正な名前は拒否します。
 起動が60秒を超える隔離環境では`READINESS_ATTEMPTS`（既定30）と
 `READINESS_INTERVAL_SECONDS`（既定2）を明示できます。
 
@@ -157,7 +158,7 @@ branch/commit指定は`--advanced`が必要です。master resetは開発中コ�
 ./scripts/build-bundle.sh
 ./scripts/verify-release.sh
 ./scripts/prepare-release-assets.sh ./dist/release
-sudo ./scripts/publish-web-release.sh ./dist/release /var/www/trpger/labo/update3 5.1.0 4.1.0
+sudo ./scripts/publish-web-release.sh ./dist/release /var/www/trpger/labo/update3 5.1.1 4.1.0
 ```
 
 bundle生成はbyte-identicalです。公開scriptはv4.1.0固定領域を保持し、v5固定領域を作成して、
