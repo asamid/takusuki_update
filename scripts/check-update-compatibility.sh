@@ -147,7 +147,7 @@ done < "$PATCH_ROOT/patch-manifest.tsv"
 # Use the same official frontend fingerprint as the runtime updater.
 # shellcheck disable=SC2034
 PATCH_DIR=$PATCH_ROOT
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 as_misskey() { "$@"; }
 # shellcheck disable=SC1090,SC1091
 source <(sed -n '/^avatar_sort_snapshot() {/,/^check_patch_series() {/p' "$ROOT/takusuki_update5.sh" | sed '$d')

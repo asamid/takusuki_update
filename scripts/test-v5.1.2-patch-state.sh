@@ -16,10 +16,10 @@ UPDATER_VERSION=5.1.2 BUNDLE_RELEASE_ID=5.1.2
 ASSET_ACTUAL=$(sha256sum "$ROOT/bundle/takusuki-update3-bundle/assets/unknown.png")
 ASSET_ACTUAL=${ASSET_ACTUAL%% *}
 
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 as_misskey() { "$@"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 step() { :; }
 {
 	sed -n '/^safe_relative_path() {/,/^verify_zip_sidecar() {/p' "$ROOT/takusuki_update5.sh" | sed '$d'
