@@ -63,8 +63,8 @@ fi
 mkdir -p "$stage/releases/$RELEASE_ID"
 for file in "${FILES[@]}"; do install -m 0644 "$ARTIFACT_DIR/$file" "$stage/releases/$RELEASE_ID/$file"; done
 
-ln -sfn "releases/$RELEASE_ID" "$stage/current"
-for file in "${FILES[@]}"; do ln -sfn "current/$file" "$stage/$file"; done
+ln -sfnT "releases/$RELEASE_ID" "$stage/current"
+for file in "${FILES[@]}"; do ln -sfnT "current/$file" "$stage/$file"; done
 
 # Keep the v4 normal-name endpoints usable and pinned to their immutable
 # release. V5 uses distinct filenames, so switching current never retargets a
@@ -81,7 +81,7 @@ for file in "${LEGACY_FILES[@]}"; do
 		cmp -s "$WEB_ROOT/$file" "$stage/releases/$LEGACY_RELEASE_ID/$file" \
 			|| { printf 'Legacy URL differs from its pinned release: %s\n' "$file" >&2; exit 1; }
 	fi
-	ln -sfn "releases/$LEGACY_RELEASE_ID/$file" "$stage/$file"
+	ln -sfnT "releases/$LEGACY_RELEASE_ID/$file" "$stage/$file"
 done
 
 # Exchange the complete directory tree in one renameat2 syscall. Readers see
