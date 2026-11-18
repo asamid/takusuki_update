@@ -144,17 +144,38 @@ while IFS=$'\t' read -r id filename _description required _introduced upstream s
 	MANIFEST_UPSTREAM["$filename"]=$upstream
 done < "$PATCH_ROOT/patch-manifest.tsv"
 
+# Use the same official frontend fingerprint as the runtime updater.
+# shellcheck disable=SC2034
+PATCH_DIR=$PATCH_ROOT
+# shellcheck disable=SC2329
+as_misskey() { "$@"; }
+# shellcheck disable=SC1090,SC1091
+source <(sed -n '/^avatar_sort_snapshot() {/,/^check_patch_series() {/p' "$ROOT/takusuki_update5.sh" | sed '$d')
+
 OVERALL='PASS'
 while IFS= read -r patch; do
 	[[ -z "$patch" || "$patch" == \#* ]] && continue
 	[[ -n "${MANIFEST_SHA[$patch]:-}" && -r "$PATCH_ROOT/$patch" ]] || fail "series/manifest mismatch: $patch"
-	[[ "${MANIFEST_REQUIRED[$patch]}" == 'required' ]] || fail "series contains non-required patch: $patch"
 	actual_sha=$(sha256sum "$PATCH_ROOT/$patch" | awk '{print $1}')
 	[[ "$actual_sha" == "${MANIFEST_SHA[$patch]}" ]] || fail "patch hash mismatch: $patch"
+	if [[ "$patch" == '040-avatar-decoration-category-sort.patch' ]]; then
+		[[ "${MANIFEST_REQUIRED[$patch]}" == temporary ]] || fail '040 must be temporary'
+		if avatar_sort_is_upstream "$WORKTREE" "$TARGET_COMMIT"; then
+			printf '%s\t%s\t%s\t%s\n' "$patch" UPSTREAM_EQUIVALENT "$actual_sha" "${MANIFEST_UPSTREAM[$patch]}" >> "$PATCHES_FILE"
+			continue
+		fi
+		if [[ "${MANIFEST_UPSTREAM[$patch]}" != pending-upstream ]]; then
+			printf '%s\t%s\t%s\t%s\n' "$patch" CONFLICT "$actual_sha" "${MANIFEST_UPSTREAM[$patch]}" >> "$PATCHES_FILE"
+			OVERALL='FAIL'
+			continue
+		fi
+	else
+		[[ "${MANIFEST_REQUIRED[$patch]}" == required ]] || fail "series contains non-required patch: $patch"
+	fi
 	if git -C "$WORKTREE" apply --check --whitespace=error-all "$PATCH_ROOT/$patch"; then
 		git -C "$WORKTREE" apply --whitespace=error-all "$PATCH_ROOT/$patch"
 		printf '%s\t%s\t%s\t%s\n' "$patch" APPLIES "$actual_sha" "${MANIFEST_UPSTREAM[$patch]}" >> "$PATCHES_FILE"
-	elif git -C "$WORKTREE" apply --reverse --check "$PATCH_ROOT/$patch"; then
+	elif [[ "${MANIFEST_REQUIRED[$patch]}" == required ]] && git -C "$WORKTREE" apply --reverse --check "$PATCH_ROOT/$patch"; then
 		printf '%s\t%s\t%s\t%s\n' "$patch" UPSTREAM_EQUIVALENT "$actual_sha" "${MANIFEST_UPSTREAM[$patch]}" >> "$PATCHES_FILE"
 		[[ "$OVERALL" == 'FAIL' ]] || OVERALL='BLOCKED'
 	else
@@ -164,7 +185,7 @@ while IFS= read -r patch; do
 done < "$PATCH_ROOT/series"
 
 if [[ "$OVERALL" == 'PASS' ]] && git -C "$WORKTREE" diff --check >"$OUTPUT_DIR/logs/diff-check.log" 2>&1; then
-	record_step patch_series PASS 'all managed patches apply in order'
+	record_step patch_series PASS 'all required patches apply; temporary patches applied or verified upstream'
 elif [[ "$OVERALL" == 'BLOCKED' ]]; then
 	record_step patch_series BLOCKED 'one or more patches may already be upstream; removal requires review and tests'
 else
@@ -201,6 +222,14 @@ PY
 		fi
 	else
 		record_step targeted_tests SKIP 'prior full-validation step failed'
+	fi
+
+	if [[ "$OVERALL" == 'PASS' ]]; then
+		if node --experimental-strip-types "$ROOT/scripts/test-avatar-decoration-sort.mjs" "$WORKTREE" >"$OUTPUT_DIR/logs/avatar-sort.log" 2>&1; then
+			record_step avatar_sort PASS 'category sort and both Vue templates'
+		else
+			record_step avatar_sort FAIL 'avatar sort regression'; OVERALL='FAIL'
+		fi
 	fi
 
 	if [[ "$OVERALL" == 'PASS' ]]; then

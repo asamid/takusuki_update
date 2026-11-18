@@ -4,8 +4,8 @@ umask 077
 
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
-readonly EXPECTED_UPDATER_SHA256='1f8cc1c9c61339dbcdaca9f3e327b6018b254fda9347c3415cfb51b7535fc6e6'
-readonly EXPECTED_BUNDLE_SHA256='0fb0d5ca3338bf485ace28f6cf55f0edf1b233de1308a3216a62a8c48c003748'
+readonly EXPECTED_UPDATER_SHA256='4f1630584854c36666c6c4e29035f44d526d287b3b8e0ea857c2ddc684ab5594'
+readonly EXPECTED_BUNDLE_SHA256='839ecfba5181dfa700481e0de2092ecf97f616d09e1e9568880380fd44c19eda'
 BUILD_DIR=$(mktemp -d /tmp/takusuki-update5-verify.XXXXXXXX)
 trap 'rm -rf -- "$BUILD_DIR"' EXIT
 
@@ -20,11 +20,13 @@ command -v shellcheck >/dev/null || {
 
 bash -n "$ROOT/takusuki_update5.sh"
 node --check "$ROOT/scripts/test-blocked-host-transition.mjs"
+node --check "$ROOT/scripts/test-avatar-decoration-sort.mjs"
 shellcheck "$ROOT/takusuki_update5.sh" "$ROOT/scripts/build-bundle.sh" \
 	"$ROOT/scripts/check-update-compatibility.sh" "$ROOT/scripts/prepare-release-assets.sh" \
 	"$ROOT/scripts/publish-web-release.sh" "$ROOT/scripts/staging-v5-validation-lab.sh" \
 	"$ROOT/scripts/test-fixtures/corepack-fail-stage.sh" "$ROOT/scripts/test-v5.1-runtime.sh" \
-	"$ROOT/scripts/test-v5.1-target.sh" "$0"
+	"$ROOT/scripts/test-v5.1-target.sh" "$ROOT/scripts/test-v5.1.2-patch-state.sh" \
+	"$ROOT/scripts/test-v5.1.2-instances.sh" "$ROOT/scripts/avatar-sort-snapshot.sh" "$0"
 
 "$ROOT/scripts/test-v5.1-runtime.sh"
 "$ROOT/scripts/test-v5.1-target.sh"

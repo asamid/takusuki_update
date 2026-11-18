@@ -46,11 +46,11 @@ same-version deploymentとして適用済みです。
 
 ## Release identity
 
-Release IDとMisskey versionは分離しています。5.1.1 format 2 bundleは対象を拒否する固定値ではなく、
+Release IDとMisskey versionは分離しています。5.1.2 format 2 bundleは対象を拒否する固定値ではなく、
 深い互換性証拠が存在する参照version/commitを記録します。
 
 ```text
-release_id: 5.1.1
+release_id: 5.1.2
 compatibility_reference_version: 2026.11.0
 compatibility_reference_commit: dd7b4905d715d2587fa2f2cb6a88ecac8878ef0d
 bundle_sha256: 0fb0d5ca3338bf485ace28f6cf55f0edf1b233de1308a3216a62a8c48c003748

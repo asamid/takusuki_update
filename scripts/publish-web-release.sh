@@ -28,16 +28,38 @@ for file in "${FILES[@]}"; do [[ -f "$ARTIFACT_DIR/$file" && ! -L "$ARTIFACT_DIR
 	cd "$ARTIFACT_DIR"
 	sha256sum -c takusuki_update5.sh.sha256
 	sha256sum -c takusuki-update5-bundle.zip.sha256
+	grep -Fxq "# Version: $RELEASE_ID" takusuki_update5.sh
+	python3 - "$RELEASE_ID" <<'PYZIP'
+import sys
+import zipfile
+
+with zipfile.ZipFile('takusuki-update5-bundle.zip') as archive:
+    if archive.testzip() is not None:
+        raise SystemExit('bundle ZIP CRC mismatch')
+    meta = archive.read('takusuki-update3-bundle/bundle-manifest.tsv').decode().splitlines()
+    ids = [row for row in meta if row.startswith('META\trelease_id\t')]
+    if ids != [f'META\trelease_id\t{sys.argv[1]}']:
+        raise SystemExit('bundle release ID mismatch')
+PYZIP
 )
 
 parent=$(dirname -- "$WEB_ROOT")
 name=$(basename -- "$WEB_ROOT")
 mkdir -p "$parent"
+exec 9>"$parent/.${name}.publish.lock"
+flock -n 9 || { printf 'Another publication is in progress\n' >&2; exit 1; }
+[[ ! -L "$WEB_ROOT" && ! -L "$WEB_ROOT/releases" ]] || { printf 'Web root and releases must not be symlinks\n' >&2; exit 1; }
+[[ ! -e "$WEB_ROOT/releases/$RELEASE_ID" && ! -L "$WEB_ROOT/releases/$RELEASE_ID" ]] \
+	|| { printf 'Immutable release already exists: %s\n' "$RELEASE_ID" >&2; exit 1; }
 stage=$(mktemp -d "$parent/.${name}.publish.XXXXXXXX")
 cleanup() { [[ -d "$stage" ]] && rm -rf -- "$stage"; }
 trap cleanup EXIT
 
-if [[ -d "$WEB_ROOT" ]]; then cp -a "$WEB_ROOT/." "$stage/"; fi
+if [[ -d "$WEB_ROOT" ]]; then
+	cp -a "$WEB_ROOT/." "$stage/"
+else
+	chmod 0755 "$stage"
+fi
 mkdir -p "$stage/releases/$RELEASE_ID"
 for file in "${FILES[@]}"; do install -m 0644 "$ARTIFACT_DIR/$file" "$stage/releases/$RELEASE_ID/$file"; done
 
@@ -55,6 +77,10 @@ readonly -a LEGACY_FILES=(
 )
 for file in "${LEGACY_FILES[@]}"; do
 	[[ -f "$stage/releases/$LEGACY_RELEASE_ID/$file" ]] || { printf 'Missing immutable legacy artifact: %s\n' "$file" >&2; exit 1; }
+	if [[ -e "$WEB_ROOT/$file" ]]; then
+		cmp -s "$WEB_ROOT/$file" "$stage/releases/$LEGACY_RELEASE_ID/$file" \
+			|| { printf 'Legacy URL differs from its pinned release: %s\n' "$file" >&2; exit 1; }
+	fi
 	ln -sfn "releases/$LEGACY_RELEASE_ID/$file" "$stage/$file"
 done
 
@@ -75,12 +101,16 @@ if renameat2(-100, source, -100, target, 2) != 0:  # AT_FDCWD, RENAME_EXCHANGE
     error = ctypes.get_errno()
     raise OSError(error, os.strerror(error))
 PY
-	backup="$parent/.${name}.previous.$(date -u +%Y%m%dT%H%M%SZ)"
-	mv -- "$stage" "$backup"
-	stage=''
-	printf 'Previous tree: %s\n' "$backup"
+	previous=$stage
+	stage='' # After the exchange the old live tree must never be cleaned up.
+	backup="$parent/.${name}.previous.${previous##*.}"
+	if mv -T -- "$previous" "$backup"; then
+		printf 'Previous tree: %s\n' "$backup"
+	else
+		printf 'Previous tree retained at: %s\n' "$previous" >&2
+	fi
 else
-	mv -- "$stage" "$WEB_ROOT"
+	mv -T -- "$stage" "$WEB_ROOT"
 	stage=''
 fi
 trap - EXIT

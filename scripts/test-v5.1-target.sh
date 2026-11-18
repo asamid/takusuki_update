@@ -36,12 +36,15 @@ while IFS= read -r patch; do
 		"$ROOT/bundle/takusuki-update3-bundle/misskey-patches/$patch"
 	((patch_count += 1))
 done < "$ROOT/bundle/takusuki-update3-bundle/misskey-patches/series"
-assert_eq "$patch_count" '4'
+assert_eq "$patch_count" '5'
 git -C "$SOURCE" diff --check
+node --experimental-strip-types "$ROOT/scripts/test-avatar-decoration-sort.mjs" "$SOURCE"
+"$ROOT/scripts/test-v5.1.2-patch-state.sh" "$SOURCE"
+"$ROOT/scripts/test-v5.1.2-instances.sh" "$SOURCE"
 
 mapfile -t migration_diff < <(git -C "$SOURCE" diff --name-status 2026.10.1..HEAD -- packages/backend/migration)
 assert_eq "${#migration_diff[@]}" '3'
 printf '%s\n' "${migration_diff[@]}" | grep -F $'A\tpackages/backend/migration/1794385801836-FixMetaMigratedConfigColumnDefaults.js' >/dev/null
 printf '%s\n' "${migration_diff[@]}" | grep -F $'A\tpackages/backend/migration/js/migration-config.js' >/dev/null
 
-printf '2026.11.0 TARGET: PASS (4 patches; migration diff recorded)\n'
+printf '2026.11.0 TARGET: PASS (5 patches; migration diff recorded)\n'

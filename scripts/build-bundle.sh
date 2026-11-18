@@ -5,7 +5,7 @@ umask 022
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly ROOT
 readonly SOURCE="$ROOT/bundle/takusuki-update3-bundle"
-readonly EXPECTED_SHA256='0fb0d5ca3338bf485ace28f6cf55f0edf1b233de1308a3216a62a8c48c003748'
+readonly EXPECTED_SHA256='839ecfba5181dfa700481e0de2092ecf97f616d09e1e9568880380fd44c19eda'
 readonly OUTPUT_DIR="${1:-$ROOT/dist}"
 
 [[ -d "$SOURCE" ]] || { printf 'Missing bundle source: %s\n' "$SOURCE" >&2; exit 1; }
@@ -50,8 +50,8 @@ for line_no, line in enumerate(manifest.read_text(encoding='utf-8').splitlines()
 
 if (
     meta.get('bundle_version') != '2'
-    or meta.get('minimum_updater_version') != '5.1.1'
-    or meta.get('release_id') != '5.1.1'
+    or meta.get('minimum_updater_version') != '5.1.2'
+    or meta.get('release_id') != '5.1.2'
     or meta.get('compatibility_reference_version') != '2026.11.0'
     or meta.get('compatibility_reference_commit') != 'dd7b4905d715d2587fa2f2cb6a88ecac8878ef0d'
 ):
@@ -89,7 +89,7 @@ PY
 
 actual_sha256=$(sha256sum "$TEMP_ZIP" | awk '{print $1}')
 if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
-	printf 'Bundle is not byte-identical to the Live Staging artifact.\nExpected: %s\nActual:   %s\n' \
+	printf 'Bundle is not byte-identical to the pinned release artifact.\nExpected: %s\nActual:   %s\n' \
 		"$EXPECTED_SHA256" "$actual_sha256" >&2
 	exit 1
 fi

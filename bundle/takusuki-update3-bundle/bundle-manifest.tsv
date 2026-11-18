@@ -1,7 +1,7 @@
 META	bundle_version	2
 META	generated_at	2026-11-18T00:00:00+00:00
-META	minimum_updater_version	5.1.1
-META	release_id	5.1.1
+META	minimum_updater_version	5.1.2
+META	release_id	5.1.2
 META	compatibility_reference_version	2026.11.0
 META	compatibility_reference_commit	dd7b4905d715d2587fa2f2cb6a88ecac8878ef0d
 FILE	assets/unknown.png	ac918e92451687bac2c17a139eb2528fd450c2b4dfcc169caae7442d88889c0f	875
@@ -10,5 +10,7 @@ FILE	misskey-patches/001-max-note-text-length.patch	981b736023ee3f9c55d30a2bd595
 FILE	misskey-patches/010-exp003-federation-chart-blocked-host.patch	2cdfdeac087811ace249f75d5dafec1636e0a8eb7a8c768f897748d89d826079	18707
 FILE	misskey-patches/020-gallery-file-limit-256.patch	540962dc92bdd951e73be7ac4c8091c874d53c6e9150b19698837e35234f95e4	1475
 FILE	misskey-patches/030-note-blocked-host-query-optimization.patch	40d159eff88bf69d8719d8215f0b69d3371658912f6d944bd8f6b135dae8086f	5526
-FILE	misskey-patches/patch-manifest.tsv	cde049c630f7ae0015d1ac70ef8498e5f788cd34efc117829476900a9b5f7c68	1194
-FILE	misskey-patches/series	a53968934777ab8b12ff83587728d0379655be019681f0a7a015ab6b8133f86b	158
+FILE	misskey-patches/040-avatar-decoration-category-sort.patch	2a2572968c0f809ed8490e40c1788e23e7fb71667012ff41c212619596471f35	4433
+FILE	misskey-patches/040-upstream-snapshots.txt	11709060b1e151d6b67f969f554762b9b5ffe9a921d717f3de28b23f7974be96	71
+FILE	misskey-patches/patch-manifest.tsv	bede0f27b85135dc328610436ff9b6cb4fb427f3af17951644266e81d16b76a7	1479
+FILE	misskey-patches/series	4182624932574700ee8322e5c824780f84599dd57aee6cacafbab53134ab3357	200

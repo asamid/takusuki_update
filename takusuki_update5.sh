@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: Interactive and non-interactive, reproducible, fail-closed Misskey operations.
 # Author: asami / Takusuki operations (implementation prepared with Codex)
-# Version: 5.1.1
+# Version: 5.1.2
 # Changelog: v5.1 adds Node.js engine enforcement and version-aware systemd
 # startup management for Misskey 2026.11.0 and later.
 # Safety design: preflight and patch checks run before downtime; required failures stop the update.
@@ -11,7 +11,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly UPDATER_VERSION='5.1.1'
+readonly UPDATER_VERSION='5.1.2'
 readonly START_MJS_VERSION='2026.11.0'
 readonly DEFAULT_BUNDLE_URL="https://github.com/asamid/takusuki_update/releases/download/v${UPDATER_VERSION}/takusuki-update5-bundle.zip"
 readonly DEFAULT_BUNDLE_SHA_URL="${DEFAULT_BUNDLE_URL}.sha256"
@@ -45,6 +45,7 @@ UPDATE_STARTED_EPOCH=''
 SERVICE_STOP_EPOCH=''
 SERVICE_START_EPOCH=''
 BUNDLE_RELEASE_ID=''
+TARGET_PATCH_COUNT=0
 BUNDLE_FORMAT_VERSION=''
 BUNDLE_REFERENCE_VERSION=''
 BUNDLE_REFERENCE_COMMIT=''
@@ -299,7 +300,7 @@ if [[ -n "$DB_NAME_OVERRIDE" ]]; then
 	[[ "$DB_NAME_OVERRIDE" =~ ^[A-Za-z0-9_.-]+$ ]] || fail 'invalid --db-name value'
 fi
 
-if [[ -r /root/.misskey.env ]]; then
+if [[ -r /root/.misskey.env && -z "${CALLER_ENV_OVERRIDES[MISSKEY_DIR]+set}${CALLER_ENV_OVERRIDES[SERVICE_NAME]+set}${CALLER_ENV_OVERRIDES[MISSKEY_USER]+set}" ]]; then
 	# Trusted administrator-owned deployment environment; values are never printed.
 	# shellcheck disable=SC1091
 	source /root/.misskey.env
@@ -317,19 +318,7 @@ choose_detected_value() {
 	if ((${#values[@]} == 0)); then
 		fail "could not auto-detect $label; set it explicitly in /root/.misskey.env or the environment"
 	fi
-	if [[ ! -t 0 ]]; then
-		fail "multiple $label candidates detected (${values[*]}); set it explicitly"
-	fi
-	printf 'Multiple %s candidates were detected:\n' "$label" >&2
-	local i answer
-	for i in "${!values[@]}"; do printf ' [%d] %s\n' "$((i + 1))" "${values[i]}" >&2; done
-	while true; do
-		read -r -p "Select $label [1-${#values[@]}]: " answer
-		if [[ "$answer" =~ ^[0-9]+$ ]] && ((answer >= 1 && answer <= ${#values[@]})); then
-			printf '%s' "${values[answer - 1]}"
-			return
-		fi
-	done
+	fail "multiple $label candidates detected (${values[*]}); set it explicitly"
 }
 
 detect_misskey_dir() {
@@ -387,35 +376,91 @@ if [[ -z "${MISSKEY_DIR:-}" && -n "${misskey_directory:-}" ]]; then
 		MISSKEY_DIR="$_detected_home/$misskey_directory"
 	fi
 fi
+normalize_selected_service() {
+	SERVICE_NAME=$(normalize_service_name "$SERVICE_NAME")
+	[[ "$SERVICE_NAME" =~ ^[A-Za-z0-9_][A-Za-z0-9_.@-]*\.service$ ]] || fail 'unsafe systemd service name'
+}
+
+validate_instance_service() {
+	local directory user group dynamic root image
+	systemctl cat "$SERVICE_NAME" >/dev/null || fail "systemd service missing: $SERVICE_NAME"
+	directory=$(systemctl show -p WorkingDirectory --value "$SERVICE_NAME") || fail 'cannot inspect WorkingDirectory'
+	user=$(systemctl show -p User --value "$SERVICE_NAME") || fail 'cannot inspect User'
+	group=$(systemctl show -p Group --value "$SERVICE_NAME") || fail 'cannot inspect Group'
+	dynamic=$(systemctl show -p DynamicUser --value "$SERVICE_NAME") || fail 'cannot inspect DynamicUser'
+	root=$(systemctl show -p RootDirectory --value "$SERVICE_NAME") || fail 'cannot inspect RootDirectory'
+	image=$(systemctl show -p RootImage --value "$SERVICE_NAME") || fail 'cannot inspect RootImage'
+	[[ "$dynamic" != yes && ( -z "$root" || "$root" == / ) && -z "$image" ]] || fail 'unsupported systemd isolation'
+	[[ -n "$user" && "$user" != root && "$user" != 0 && "$user" == "$MISSKEY_USER" ]] || fail 'systemd user mismatch or unsupported root service'
+	[[ -n "$directory" && "$(realpath -e -- "$directory")" == "$MISSKEY_DIR" ]] || fail 'systemd working directory mismatch'
+	MISSKEY_GROUP=${group:-$(id -gn "$MISSKEY_USER")}
+	getent group "$MISSKEY_GROUP" >/dev/null || fail 'systemd group not found'
+}
+
+validate_instance_config() {
+	local raw
+	[[ -r "$MISSKEY_DIR/.config/default.yml" ]] || fail '.config/default.yml missing'
+	[[ -z "${MISSKEY_CONFIG_YML:-}" && "${NODE_ENV:-}" != test ]] || fail 'only .config/default.yml is supported'
+	raw=$(systemctl show -p Environment --value "$SERVICE_NAME") || fail 'cannot inspect systemd environment'
+	[[ "$raw" != *'MISSKEY_CONFIG_YML='* && "$raw" != *'NODE_ENV=test'* && "$raw" != *'DATABASE_'* && "$raw" != *'MISSKEY_URL='* ]] || fail 'service uses a non-default config'
+	raw=$(systemctl show -p EnvironmentFiles --value "$SERVICE_NAME") || fail 'cannot inspect systemd EnvironmentFiles'
+	[[ -z "$raw" ]] || fail 'EnvironmentFile services need manual review; effective config cannot be verified'
+}
+
+resolve_instance_health() {
+	local port
+	if [[ -z "$HEALTH_LOCAL_URL" || -z "$HEALTH_API_URL" ]]; then
+		port=$(db_node listen-port) || fail 'cannot detect the Misskey TCP port; set both health URLs explicitly'
+		if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )); then fail 'invalid Misskey TCP port'; fi
+		HEALTH_LOCAL_URL=${HEALTH_LOCAL_URL:-http://127.0.0.1:$port/}
+		HEALTH_API_URL=${HEALTH_API_URL:-http://127.0.0.1:$port/api/meta}
+		printf "Local health: http://127.0.0.1:%s/ ; http://127.0.0.1:%s/api/meta\n" "$port" "$port"
+	fi
+}
+
+SERVICE_NAME=${SERVICE_NAME:-${host:-}}
 MISSKEY_DIR=${MISSKEY_DIR:-}
+if [[ -n "$SERVICE_NAME" ]]; then
+	normalize_selected_service
+	if [[ -z "$MISSKEY_DIR" ]]; then
+		MISSKEY_DIR=$(systemctl show -p WorkingDirectory --value "$SERVICE_NAME")
+		[[ -n "$MISSKEY_DIR" && "$MISSKEY_DIR" != / ]] || fail 'service must specify a Misskey WorkingDirectory'
+	fi
+fi
 [[ -n "$MISSKEY_DIR" ]] || MISSKEY_DIR=$(detect_misskey_dir)
-MISSKEY_DIR=$(realpath -e "$MISSKEY_DIR") || fail "Misskey source directory does not exist: $MISSKEY_DIR"
-[[ -n "$MISSKEY_USER" ]] || MISSKEY_USER=$(stat -c %U "$MISSKEY_DIR")
+MISSKEY_DIR=$(realpath -e -- "$MISSKEY_DIR") || fail "Misskey source directory does not exist: $MISSKEY_DIR"
+[[ "$MISSKEY_DIR" != *$'\n'* && "$MISSKEY_DIR" != *$'\t'* ]] || fail 'unsupported control character in source path'
+if (( PATCH_ONLY == 0 )); then
+	if systemd-detect-virt --quiet --container; then fail 'containers are unsupported; use an Ubuntu systemd host'; fi
+	[[ -n "$SERVICE_NAME" ]] || SERVICE_NAME=$(detect_service_name)
+	normalize_selected_service
+	[[ -n "$MISSKEY_USER" ]] || MISSKEY_USER=$(systemctl show -p User --value "$SERVICE_NAME")
+else
+	[[ -n "$MISSKEY_USER" ]] || MISSKEY_USER=$(stat -c %U "$MISSKEY_DIR")
+fi
 [[ "$MISSKEY_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || fail 'invalid MISSKEY_USER'
 MISSKEY_HOME=$(getent passwd "$MISSKEY_USER" | cut -d: -f6)
 [[ -n "$MISSKEY_HOME" ]] || fail "user does not exist: $MISSKEY_USER"
-
 USER_ENV_FILE="$MISSKEY_HOME/.misskey.env"
-if [[ -r "$USER_ENV_FILE" ]]; then
-	# shellcheck disable=SC1090
-	source "$USER_ENV_FILE"
-fi
-restore_caller_env_overrides
+MISSKEY_GROUP=$(id -gn "$MISSKEY_USER")
+if (( PATCH_ONLY == 0 )); then validate_instance_service; validate_instance_config; fi
 
-SERVICE_NAME=${SERVICE_NAME:-${host:-}}
-[[ -n "$SERVICE_NAME" ]] || SERVICE_NAME=$(detect_service_name)
-SERVICE_NAME=$(normalize_service_name "$SERVICE_NAME")
-[[ "$SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+\.service$ ]] || fail 'unsafe systemd service name'
-LOG_DIR=${LOG_DIR:-/var/log/takusuki-update3}
-STATE_DIR=${STATE_DIR:-/var/lib/takusuki-update3}
-BUNDLE_CACHE_DIR=${BUNDLE_CACHE_DIR:-/var/cache/takusuki-update3}
-DB_BACKUP_DIR=${DB_BACKUP_DIR:-/var/backups/takusuki}
+INSTANCE_KEY=$(printf '%s\0%s\0%s' "$SERVICE_NAME" "$MISSKEY_DIR" "$MISSKEY_USER" | sha256sum)
+INSTANCE_KEY=${INSTANCE_KEY%% *}
+if (( CHECK_ONLY == 1 && EUID != 0 )); then
+	LOG_DIR=${LOG_DIR:-"${XDG_STATE_HOME:-$HOME/.local/state}/takusuki-update5/$INSTANCE_KEY/log"}
+	STATE_DIR=${STATE_DIR:-"${XDG_STATE_HOME:-$HOME/.local/state}/takusuki-update5/$INSTANCE_KEY"}
+fi
+LOG_DIR=${LOG_DIR:-/var/log/takusuki-update5/$INSTANCE_KEY}
+STATE_DIR=${STATE_DIR:-/var/lib/takusuki-update5/$INSTANCE_KEY}
+BUNDLE_CACHE_DIR=${BUNDLE_CACHE_DIR:-/var/cache/takusuki-update5/$INSTANCE_KEY}
+DB_BACKUP_DIR=${DB_BACKUP_DIR:-/var/backups/takusuki-update5/$INSTANCE_KEY}
 BUNDLE_URL=${BUNDLE_URL:-$DEFAULT_BUNDLE_URL}
 BUNDLE_SHA_URL=${BUNDLE_SHA_URL:-$DEFAULT_BUNDLE_SHA_URL}
 MIN_FREE_KB=${MIN_FREE_KB:-10485760}
-REQUIRE_ENV_FILE=${REQUIRE_ENV_FILE:-1}
-HEALTH_LOCAL_URL=${HEALTH_LOCAL_URL:-http://127.0.0.1:3000/}
-HEALTH_API_URL=${HEALTH_API_URL:-http://127.0.0.1:3000/api/meta}
+REQUIRE_ENV_FILE=${REQUIRE_ENV_FILE:-0}
+HEALTH_LOCAL_URL=${HEALTH_LOCAL_URL:-}
+HEALTH_API_URL=${HEALTH_API_URL:-}
 HEALTH_LAN_URL=${HEALTH_LAN_URL:-}
 HEALTH_PUBLIC_URL=${HEALTH_PUBLIC_URL:-}
 READINESS_ATTEMPTS=${READINESS_ATTEMPTS:-30}
@@ -435,7 +480,7 @@ as_misskey() {
 	if (( EUID == 0 )); then
 		# Expansion is intentionally done by child Bash.
 		# shellcheck disable=SC2016
-		runuser --preserve-environment -u "$MISSKEY_USER" -- \
+		runuser --preserve-environment -u "$MISSKEY_USER" -g "$MISSKEY_GROUP" -- \
 			env HOME="$MISSKEY_HOME" USER="$MISSKEY_USER" LOGNAME="$MISSKEY_USER" \
 			bash -c 'cd -- "$1"; shift; exec "$@"' bash "$MISSKEY_DIR" "$@"
 	elif [[ "$(id -un)" == "$MISSKEY_USER" ]]; then
@@ -482,7 +527,7 @@ release_version_ge() {
 
 node_satisfies_engine() {
 	local executable=$1 engine=$2 actual
-	actual=$($executable --version 2>/dev/null) || return 1
+	actual=$("$executable" --version 2>/dev/null) || return 1
 	node - "$actual" "$engine" <<'NODE'
 const actualText = process.argv[2];
 const range = process.argv[3];
@@ -550,6 +595,8 @@ import shlex
 import sys
 
 raw = sys.argv[1]
+if raw.count('argv[]=') != 1:
+    raise SystemExit('exactly one ExecStart is required')
 match = re.search(r'(?:^|;\s*)argv\[\]=(.*?)(?:\s*;\s*(?:ignore_errors|start_time|stop_time|pid|code|status)=|\s*}$)', raw)
 if not match:
     raise SystemExit('unsupported systemctl ExecStart serialization')
@@ -571,12 +618,16 @@ resolve_service_start() {
 		SERVICE_EXEC_PREFIX+=("${SERVICE_EXEC_ARGV[0]}")
 		index=1
 		while ((index < ${#SERVICE_EXEC_ARGV[@]})) && [[ "${SERVICE_EXEC_ARGV[index]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
+			case "${SERVICE_EXEC_ARGV[index]}" in
+				MISSKEY_CONFIG_YML=*|NODE_ENV=test|DATABASE_*=*|MISSKEY_URL=*) fail 'service uses a non-default config' ;;
+			esac
 			SERVICE_EXEC_PREFIX+=("${SERVICE_EXEC_ARGV[index]}")
 			((index += 1))
 		done
 	fi
 	((index < ${#SERVICE_EXEC_ARGV[@]})) || fail 'effective ExecStart has no executable'
 	command=${SERVICE_EXEC_ARGV[index]}
+	[[ "$command" == /* ]] || fail 'use an absolute Node.js or package manager path in systemd ExecStart'
 	base=${command##*/}
 	case "$base" in
 		npm|pnpm)
@@ -584,11 +635,8 @@ resolve_service_start() {
 			elif ((index + 3 == ${#SERVICE_EXEC_ARGV[@]})) && [[ "${SERVICE_EXEC_ARGV[index + 1]}" == 'run' && "${SERVICE_EXEC_ARGV[index + 2]}" == 'start' ]]; then :
 			else fail 'unknown npm/pnpm ExecStart; refusing to infer a replacement'; fi
 		SERVICE_START_STYLE='legacy'
-		if [[ "$command" == /* && -x "${command%/*}/node" ]]; then
-			SERVICE_NODE_PATH=$(readlink -f "${command%/*}/node")
-		else
-			SERVICE_NODE_PATH=$(readlink -f "$(command -v node)")
-		fi
+		[[ -x "${command%/*}/node" ]] || fail 'cannot resolve Node.js next to the systemd package manager'
+		SERVICE_NODE_PATH=$(readlink -f "${command%/*}/node")
 		;;
 		node)
 		SERVICE_NODE_PATH=$(readlink -f "$command" 2>/dev/null || true)
@@ -804,13 +852,15 @@ verify_bundle_manifest() {
 	[[ -f "$manifest" && ! -L "$manifest" ]] || fail 'bundle-manifest.tsv missing or unsafe'
 	local kind key value size extra bundle_version='' minimum_version='' release_id=''
 	local reference_version='' reference_commit='' legacy_target_version='' legacy_target_commit=''
-	declare -A expected_sha expected_size
+	declare -A expected_sha expected_size seen_meta
 	while IFS=$'\t' read -r kind key value size extra; do
 		[[ -n "$kind" ]] || continue
 		[[ -z "$extra" ]] || fail "bundle manifest has extra fields: $key"
 		case "$kind" in
 			META)
 				[[ -n "$key" && -n "$value" && -z "$size" ]] || fail 'invalid bundle META row'
+				[[ -z "${seen_meta[$key]:-}" ]] || fail "duplicate bundle metadata: $key"
+				seen_meta[$key]=1
 				case "$key" in
 					bundle_version) bundle_version=$value ;;
 					minimum_updater_version) minimum_version=$value ;;
@@ -838,6 +888,12 @@ verify_bundle_manifest() {
 	[[ -n "$minimum_version" ]] || fail 'bundle minimum updater version missing'
 	[[ "$(printf '%s\n%s\n' "$minimum_version" "$UPDATER_VERSION" | sort -V | head -n 1)" == "$minimum_version" ]] || fail "bundle requires updater $minimum_version"
 	[[ "$release_id" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'bundle release ID is missing or invalid'
+	if [[ "$release_id" != "$UPDATER_VERSION" ]]; then
+		if [[ -z "$BUNDLE_FILE_OVERRIDE" ]] || (( ADVANCED == 0 )) \
+			|| ! release_version_ge "$UPDATER_VERSION" "$release_id"; then
+			fail "bundle release ID mismatch: expected $UPDATER_VERSION, got $release_id"
+		fi
+	fi
 	if [[ "$bundle_version" == '1' ]]; then
 		[[ -z "$reference_version" && -z "$reference_commit" ]] || fail 'format 1 bundle contains format 2 reference metadata'
 		reference_version=$legacy_target_version
@@ -873,13 +929,11 @@ verify_bundle_manifest() {
 
 grant_bundle_read_access() {
 	(( EUID == 0 )) || return 0
-	local misskey_group
-	misskey_group=$(id -gn "$MISSKEY_USER")
 	# The root-created temporary tree remains non-public. The Misskey account
 	# receives read/traverse access only after every ZIP and manifest check passed.
-	chown root:"$misskey_group" "$TMP_BUNDLE"
+	chown root:"$MISSKEY_GROUP" "$TMP_BUNDLE"
 	chmod 0710 "$TMP_BUNDLE"
-	chown -R root:"$misskey_group" "$TMP_BUNDLE/extract"
+	chown -R root:"$MISSKEY_GROUP" "$TMP_BUNDLE/extract"
 	find "$TMP_BUNDLE/extract" -type d -exec chmod 0750 {} +
 	find "$TMP_BUNDLE/extract" -type f -exec chmod 0640 {} +
 }
@@ -946,7 +1000,7 @@ acquire_bundle() {
 db_node() {
 	local action=$1
 	shift
-	MISSKEY_DIR="$MISSKEY_DIR" DB_NAME_OVERRIDE="$DB_NAME_OVERRIDE" node --input-type=module - "$action" "$@" <<'NODE'
+	MISSKEY_DIR="$MISSKEY_DIR" DB_NAME_OVERRIDE="$DB_NAME_OVERRIDE" "${SERVICE_NODE_PATH:-node}" --input-type=module - "$action" "$@" <<'NODE'
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -959,7 +1013,15 @@ const { loadConfig } = await import(pathToFileURL(`${misskeyDir}/packages/backen
 const require = createRequire(`${misskeyDir}/packages/backend/package.json`);
 const pgModule = require('pg');
 const pg = pgModule.default ?? pgModule;
+// Only infer the port from the instance's file; a caller's PORT is not the
+// systemd process environment. For externally supplied ports use health URLs.
+if (action === 'listen-port') delete process.env.PORT;
 const config = loadConfig();
+if (action === 'listen-port') {
+  if (config.socket || !Number.isInteger(config.port)) throw new Error('Misskey TCP port unavailable');
+  process.stdout.write(String(config.port));
+  process.exit(0);
+}
 const db = config.db;
 const database = process.env.DB_NAME_OVERRIDE || db.db;
 const connection = {
@@ -1262,6 +1324,16 @@ if (( EUID == 0 )); then
 else
 	mkdir -p "$LOG_DIR" "$STATE_DIR/backups"
 fi
+if (( PATCH_ONLY == 0 )); then
+	[[ ! -L "$STATE_DIR/.instance" && ! -L "$STATE_DIR/.lock" ]] || fail 'unsafe instance state marker'
+	exec 9>"$STATE_DIR/.lock"
+	flock -n 9 || fail 'another updater is using this state directory'
+	if [[ -e "$STATE_DIR/.instance" ]]; then
+		[[ "$(<"$STATE_DIR/.instance")" == "$INSTANCE_KEY" ]] || fail 'state directory belongs to a different Misskey instance'
+	else
+		printf '%s\n' "$INSTANCE_KEY" > "$STATE_DIR/.instance"
+	fi
+fi
 LOG_FILE="$LOG_DIR/update-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -1270,10 +1342,13 @@ printf 'Mode=%s flavor=%s check=%d patch_only=%d\n' "$MODE" "$UPDATE_FLAVOR" "$C
 
 case "$MODE" in
 	db-backup)
+		resolve_service_start
 		run_db_backup
 		exit 0
 		;;
 	rollback)
+		resolve_service_start
+		resolve_instance_health
 		run_rollback
 		exit 0
 		;;
@@ -1297,6 +1372,8 @@ esac
 
 declare -A PATCH_ID PATCH_DESCRIPTION PATCH_REQUIRED PATCH_INTRODUCED PATCH_UPSTREAM PATCH_SHA PATCH_ADDED
 declare -a SERIES
+readonly TEMPORARY_PATCH=040-avatar-decoration-category-sort.patch
+TEMPORARY_PRESENT=0
 declare -a PATCH_MANAGED_PATHS
 
 load_patch_metadata() {
@@ -1312,6 +1389,7 @@ load_patch_metadata() {
 		[[ -z "$extra" ]] || fail "manifest has unexpected extra field for $filename"
 		safe_relative_path "$filename" || fail "unsafe patch filename: $filename"
 		[[ "$sha" =~ ^[0-9a-f]{64}$ ]] || fail "invalid SHA256 for $filename"
+		[[ -z "${PATCH_ID[$filename]:-}" ]] || fail "duplicate patch manifest row: $filename"
 		PATCH_ID["$filename"]=$id
 		PATCH_DESCRIPTION["$filename"]=$description
 		PATCH_REQUIRED["$filename"]=$required
@@ -1321,14 +1399,32 @@ load_patch_metadata() {
 		PATCH_ADDED["$filename"]=$added
 	done < "$MANIFEST_FILE"
 
-	local patch actual
-	for patch in "${SERIES[@]}"; do
+	local patch actual index
+	local -A seen=()
+	for index in "${!SERIES[@]}"; do
+		patch=${SERIES[index]}
 		safe_relative_path "$patch" || fail "unsafe series entry: $patch"
-		[[ -n "${PATCH_SHA[$patch]:-}" ]] || fail "series entry absent from manifest: $patch"
+		[[ -n "${PATCH_SHA[$patch]:-}" && -z "${seen[$patch]:-}" ]] || fail "invalid series entry: $patch"
+		seen[$patch]=1
 		[[ -r "$PATCH_DIR/$patch" ]] || fail "patch missing: $PATCH_DIR/$patch"
 		actual=$(sha256sum "$PATCH_DIR/$patch" | awk '{print $1}')
 		[[ "$actual" == "${PATCH_SHA[$patch]}" ]] || fail "patch SHA256 mismatch: $patch"
+		if [[ "$patch" == "$TEMPORARY_PATCH" ]]; then
+			if [[ "${PATCH_ID[$patch]}" != 040 || "${PATCH_REQUIRED[$patch]}" != temporary ]] \
+				|| (( index != ${#SERIES[@]} - 1 )); then
+				fail 'temporary patch must be the final series entry'
+			fi
+			case "${PATCH_UPSTREAM[$patch]}" in pending-upstream|retired) ;; *) fail 'unknown 040 upstream status' ;; esac
+			[[ -r "$PATCH_DIR/040-upstream-snapshots.txt" ]] || fail '040 snapshot allowlist missing'
+			TEMPORARY_PRESENT=1
+		else
+			[[ "${PATCH_REQUIRED[$patch]}" == required ]] || fail "series contains a non-required patch: $patch"
+		fi
 	done
+	(( ${#seen[@]} == ${#PATCH_ID[@]} )) || fail 'patch manifest and series inventories differ'
+	if [[ "$BUNDLE_RELEASE_ID" == "$UPDATER_VERSION" ]]; then
+		(( TEMPORARY_PRESENT == 1 && ${#SERIES[@]} == 5 )) || fail 'expected all five patch definitions'
+	fi
 }
 
 load_patch_metadata
@@ -1360,7 +1456,7 @@ managed_state_digest() {
 		if [[ -L "$root/$path" ]]; then
 			printf 'L\t%s\t%s\n' "$path" "$(readlink "$root/$path")"
 		elif [[ -f "$root/$path" ]]; then
-			printf 'F\t%s\t%s\n' "$path" "$(sha256sum "$root/$path" | awk '{print $1}')"
+			printf 'F\t%s\t%s\t%s\n' "$path" "$(stat -c %a "$root/$path" | awk '{print substr($0,length($0)-2,1) % 2}')" "$(sha256sum "$root/$path" | awk '{print $1}')"
 		elif [[ -e "$root/$path" ]]; then
 			printf 'X\t%s\n' "$path"
 		else
@@ -1372,6 +1468,7 @@ managed_state_digest() {
 classify_current_source() {
 	step 'Classify current official base and managed patch state'
 	local current_commit official_ref modified path work expected actual index match=-1
+	as_misskey git -C "$MISSKEY_DIR" diff --cached --quiet || fail 'staged changes must be reviewed before updating'
 	current_commit=$(as_misskey git -C "$MISSKEY_DIR" rev-parse HEAD)
 	official_ref=$(as_misskey git -C "$MISSKEY_DIR" for-each-ref --format='%(refname)' --contains "$current_commit" refs/remotes/origin refs/tags | sed -n '1p')
 	[[ -n "$official_ref" ]] || fail "current commit is not reachable from a fetched official ref: $current_commit"
@@ -1382,18 +1479,20 @@ classify_current_source() {
 			[[ -f "$MISSKEY_DIR/$modified" && "$(sha256sum "$MISSKEY_DIR/$modified" | awk '{print $1}')" == "$ASSET_ACTUAL" ]] \
 				|| fail 'existing unknown.png differs from the managed canonical asset'
 		fi
-	done < <(as_misskey git -C "$MISSKEY_DIR" diff --name-only HEAD --)
+	done < <(as_misskey git -C "$MISSKEY_DIR" -c core.quotePath=false diff --name-only HEAD --)
 
 	work=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-update5-state.XXXXXXXX")
-	if (( EUID == 0 )); then chown "$MISSKEY_USER":"$(id -gn "$MISSKEY_USER")" "$work"; fi
+	TMP_WORKTREE=$work
+	if (( EUID == 0 )); then chown "$MISSKEY_USER":"$MISSKEY_GROUP" "$work"; fi
 	as_misskey git -C "$MISSKEY_DIR" worktree add --detach "$work/tree" "$current_commit" >/dev/null
 	actual=$(managed_state_digest "$MISSKEY_DIR")
 	for ((index=0; index<=${#SERIES[@]}; index++)); do
 		expected=$(managed_state_digest "$work/tree")
 		[[ "$actual" == "$expected" ]] && match=$index
 		if ((index < ${#SERIES[@]})); then
-			if ! as_misskey git -C "$work/tree" apply --whitespace=error-all "$PATCH_DIR/${SERIES[index]}"; then
+			if ! as_misskey git -C "$work/tree" apply --whitespace=error-all "$PATCH_DIR/${SERIES[index]}" >"$work/apply.log" 2>&1; then
 				((match >= 0)) && break
+				cat "$work/apply.log" >&2
 				as_misskey git -C "$MISSKEY_DIR" worktree remove --force "$work/tree" >/dev/null 2>&1 || true
 				rm -rf -- "$work"
 				fail "current-base patch series cannot be classified at ${SERIES[index]}"
@@ -1402,12 +1501,14 @@ classify_current_source() {
 	done
 	as_misskey git -C "$MISSKEY_DIR" worktree remove --force "$work/tree" >/dev/null
 	rm -rf -- "$work"
+	TMP_WORKTREE=''
 	((match >= 0)) || fail 'managed source paths do not match any supported contiguous patch state'
 	SOURCE_PATCH_COUNT=$match
 	case "$match" in
 		0) SOURCE_STATE='official-unpatched' ;;
 		3) SOURCE_STATE='001-010-020-applied' ;;
 		4) SOURCE_STATE='001-010-020-030-applied' ;;
+		5) SOURCE_STATE='001-010-020-030-040-applied' ;;
 		*) SOURCE_STATE="supported-prefix-${match}-applied" ;;
 	esac
 	printf 'Source state: %s (%d/%d patches, base=%s via %s)\n' \
@@ -1504,32 +1605,58 @@ if release_version_ge "$TARGET_VERSION" "$START_MJS_VERSION"; then
 	[[ -n "$TARGET_NODE_ENGINE" ]] || fail "target $TARGET_VERSION does not declare packages/backend engines.node"
 	SHELL_NODE_PATH=$(readlink -f "$(command -v node)")
 	if ! node_satisfies_engine "$SHELL_NODE_PATH" "$TARGET_NODE_ENGINE"; then
-		fail "Node.js $($SHELL_NODE_PATH --version) does not satisfy target requirement: $TARGET_NODE_ENGINE"
+		fail "Node.js $("$SHELL_NODE_PATH" --version) does not satisfy target requirement: $TARGET_NODE_ENGINE"
 	fi
-	printf 'Node.js requirement: %s satisfies %s\n' "$($SHELL_NODE_PATH --version)" "$TARGET_NODE_ENGINE"
+	printf 'Node.js requirement: %s satisfies %s\n' "$("$SHELL_NODE_PATH" --version)" "$TARGET_NODE_ENGINE"
 fi
+
+# Hash all three frontend inputs of the official Git tree before any patch.
+# An unknown implementation, even one that reverse-applies, is not evidence.
+avatar_sort_snapshot() {
+	local tree=$1 commit=$2 path digest
+	for path in utility/group-avatar-decorations.ts pages/avatar-decorations.vue pages/settings/avatar-decoration.vue; do
+		digest=$(as_misskey git -C "$tree" show "$commit:packages/frontend/src/$path" | sha256sum) || return 1
+		printf '%s  %s\n' "${digest%% *}" "$path"
+	done
+}
+
+avatar_sort_is_upstream() {
+	local snapshot digest
+	snapshot=$(avatar_sort_snapshot "$1" "$2") || return 1
+	digest=$(printf '%s\n' "$snapshot" | sha256sum)
+	grep -Fxq "${digest%% *}" "$PATCH_DIR/040-upstream-snapshots.txt"
+}
 
 check_patch_series() {
 	step 'Check target in an isolated official worktree'
 	TMP_WORKTREE=$(mktemp -d "${TMPDIR:-/tmp}/takusuki-update5.XXXXXXXX")
 	if (( EUID == 0 )); then
-		chown "$MISSKEY_USER":"$(id -gn "$MISSKEY_USER")" "$TMP_WORKTREE"
+		chown "$MISSKEY_USER":"$MISSKEY_GROUP" "$TMP_WORKTREE"
 	fi
 	as_misskey git -C "$MISSKEY_DIR" worktree add --detach "$TMP_WORKTREE/tree" "$TARGET_COMMIT"
 
 	local patch
 	if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
 		for patch in "${SERIES[@]}"; do
-			[[ "${PATCH_REQUIRED[$patch]}" == 'required' ]] || fail "series contains a non-required patch: $patch"
 			printf 'Checking %s %s [%s; %s; %s]\n' \
 				"${PATCH_ID[$patch]}" "$patch" "${PATCH_DESCRIPTION[$patch]}" \
 				"${PATCH_INTRODUCED[$patch]}" "${PATCH_UPSTREAM[$patch]}"
+			if [[ "$patch" == "$TEMPORARY_PATCH" ]]; then
+				if avatar_sort_is_upstream "$TMP_WORKTREE/tree" "$TARGET_COMMIT"; then
+					printf '040 UPSTREAM_EQUIVALENT: reviewed official frontend snapshot; skipping patch.\n'
+					continue
+				fi
+				if [[ "${PATCH_UPSTREAM[$patch]}" == retired ]]; then
+					printf '040 CONFLICT: retired patch requires a reviewed upstream snapshot.\n' >&2
+					exit 20
+				fi
+			fi
 			if ! as_misskey git -C "$TMP_WORKTREE/tree" apply --check --whitespace=error-all "$PATCH_DIR/$patch"; then
-				printf 'PATCH COMPATIBILITY FAILURE: %s\n' "$patch" >&2
-				printf 'The change may already be upstream or the patch needs a reviewed refresh.\n' >&2
+				printf 'PATCH COMPATIBILITY FAILURE (CONFLICT): %s\n' "$patch" >&2
 				exit 20
 			fi
 			as_misskey git -C "$TMP_WORKTREE/tree" apply --whitespace=error-all "$PATCH_DIR/$patch"
+			((TARGET_PATCH_COUNT += 1))
 		done
 	else
 		printf 'VANILLA: patch application and canonical asset replacement are disabled.\n'
@@ -1584,15 +1711,11 @@ printf 'Node=%s pnpm=%s free_kib=%s\n' "$(node --version)" "$ACTUAL_PNPM" "$AVAI
 if (( REQUIRE_ENV_FILE == 1 )); then
 	[[ -r /root/.misskey.env || -r "$USER_ENV_FILE" ]] || fail 'required .misskey.env missing'
 fi
-systemctl cat "$SERVICE_NAME" >/dev/null || fail "systemd service missing: $SERVICE_NAME"
-[[ -r "$MISSKEY_DIR/.config/default.yml" ]] || fail '.config/default.yml missing'
-SERVICE_USER=$(systemctl show -p User --value "$SERVICE_NAME")
-SERVICE_WORKDIR=$(systemctl show -p WorkingDirectory --value "$SERVICE_NAME")
-[[ -z "$SERVICE_USER" || "$SERVICE_USER" == "$MISSKEY_USER" ]] || fail "systemd user mismatch: $SERVICE_USER != $MISSKEY_USER"
-[[ -z "$SERVICE_WORKDIR" || "$(realpath -e "$SERVICE_WORKDIR")" == "$MISSKEY_DIR" ]] || fail "systemd working directory mismatch: $SERVICE_WORKDIR"
+validate_instance_service
 build_systemd_start_plan
+resolve_instance_health
 if [[ -n "$TARGET_NODE_ENGINE" ]] && ! node_satisfies_engine "$SERVICE_NODE_PATH" "$TARGET_NODE_ENGINE"; then
-	fail "systemd Node.js $($SERVICE_NODE_PATH --version) does not satisfy target requirement: $TARGET_NODE_ENGINE"
+	fail "systemd Node.js $("$SERVICE_NODE_PATH" --version) does not satisfy target requirement: $TARGET_NODE_ENGINE"
 fi
 printf 'systemd startup plan: %s (%s; current=%s; target=%s)\n' \
 	"$SYSTEMD_PLAN_ACTION" "$SYSTEMD_PLAN_SUMMARY" "$SERVICE_START_STYLE" "$TARGET_START_STYLE"
@@ -1605,9 +1728,9 @@ UNTRACKED_COUNT=$(as_misskey git -C "$MISSKEY_DIR" ls-files --others --exclude-s
 printf 'Source=%s untracked_preserved=%s rollback_state=%s\n' "$SOURCE_STATE" "$UNTRACKED_COUNT" "$STATE_DIR"
 
 if [[ "$(as_misskey git -C "$MISSKEY_DIR" rev-parse HEAD)" == "$TARGET_COMMIT" ]]; then
-	if [[ "$UPDATE_FLAVOR" == 'patched' ]] && (( SOURCE_PATCH_COUNT == ${#SERIES[@]} )); then
+	if [[ "$UPDATE_FLAVOR" == 'patched' ]] && (( SOURCE_PATCH_COUNT == TARGET_PATCH_COUNT )); then
 		printf 'ALREADY APPLIED: official %s@%s with all %d managed patches. No reset, build, migration, or service restart was performed.\n' \
-			"$TARGET_VERSION" "$TARGET_COMMIT" "${#SERIES[@]}"
+			"$TARGET_VERSION" "$TARGET_COMMIT" "$TARGET_PATCH_COUNT"
 		exit 0
 	elif [[ "$UPDATE_FLAVOR" == 'vanilla' ]] && (( SOURCE_PATCH_COUNT == 0 )); then
 		printf 'ALREADY APPLIED VANILLA: exact official %s@%s with no managed patches. No reset, build, migration, or service restart was performed.\n' \
@@ -1653,7 +1776,7 @@ fi
 
 step 'Write pre-update metadata (no secret values)'
 BACKUP_DIR="$STATE_DIR/backups/$(date -u +%Y%m%dT%H%M%SZ)-$$-${TARGET_LABEL//\//_}"
-install -d -o root -g "$(id -gn "$MISSKEY_USER")" -m 0750 "$BACKUP_DIR"
+install -d -o root -g "$MISSKEY_GROUP" -m 0750 "$BACKUP_DIR"
 OLD_COMMIT=$(as_misskey git -C "$MISSKEY_DIR" rev-parse HEAD)
 OLD_VERSION=$(node -e "process.stdout.write(require(process.argv[1]).version)" "$MISSKEY_DIR/package.json")
 DEFAULT_YML_SHA=$(sha256sum "$MISSKEY_DIR/.config/default.yml" | awk '{print $1}')
@@ -1697,14 +1820,8 @@ backup_systemd_managed_state
 if [[ -r /root/.misskey.env ]]; then install -m 0600 /root/.misskey.env "$BACKUP_DIR/root-misskey.env"; fi
 if [[ -r "$USER_ENV_FILE" ]]; then install -m 0600 "$USER_ENV_FILE" "$BACKUP_DIR/user-misskey.env"; fi
 cp "$SERIES_FILE" "$MANIFEST_FILE" "$BACKUP_DIR/"
-if [[ -f "$STATE_DIR/current-patch-manifest.tsv" && -f "$STATE_DIR/current-patch-series" ]]; then
-	cp "$STATE_DIR/current-patch-manifest.tsv" "$BACKUP_DIR/pre-update-patch-manifest.tsv"
-	cp "$STATE_DIR/current-patch-series" "$BACKUP_DIR/pre-update-patch-series"
-else
-	# First v5 run after an older updater: derive the exact current prefix rather
-	# than claiming all bundle patches for an unpatched/partial source.
-	write_patch_state_files "$BACKUP_DIR" pre-update-patch-manifest.tsv pre-update-patch-series "$SOURCE_PATCH_COUNT"
-fi
+# The current checkout is authoritative; an older history may describe a different prefix.
+write_patch_state_files "$BACKUP_DIR" pre-update-patch-manifest.tsv pre-update-patch-series "$SOURCE_PATCH_COUNT"
 # The updater is root, while Git intentionally runs as the Misskey account. Let
 # the root shell own the redirection so Git never needs directory write access.
 as_misskey git -C "$MISSKEY_DIR" diff --binary > "$BACKUP_DIR/pre-update-working-tree.patch"
@@ -1738,12 +1855,13 @@ done
 as_misskey git -C "$MISSKEY_DIR" checkout --detach "$TARGET_COMMIT"
 as_misskey git -C "$MISSKEY_DIR" reset --hard "$TARGET_COMMIT"
 as_misskey git -C "$MISSKEY_DIR" submodule update --init --recursive
-install -o "$MISSKEY_USER" -g "$(id -gn "$MISSKEY_USER")" -m 0600 "$BACKUP_DIR/default.yml" "$MISSKEY_DIR/.config/default.yml"
+install -o "$MISSKEY_USER" -g "$MISSKEY_GROUP" -m 0600 "$BACKUP_DIR/default.yml" "$MISSKEY_DIR/.config/default.yml"
 [[ "$(sha256sum "$MISSKEY_DIR/.config/default.yml" | awk '{print $1}')" == "$DEFAULT_YML_SHA" ]] || fail '.config/default.yml preservation failed'
 
 step 'Apply selected source mode'
 if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
-	for patch in "${SERIES[@]}"; do
+	for ((index=0; index<TARGET_PATCH_COUNT; index++)); do
+		patch=${SERIES[index]}
 		as_misskey git -C "$MISSKEY_DIR" apply --check --whitespace=error-all "$PATCH_DIR/$patch" || {
 			printf 'PATCH COMPATIBILITY FAILURE: %s\n' "$patch" >&2
 			exit 20
@@ -1759,14 +1877,14 @@ as_misskey git -C "$MISSKEY_DIR" status --short
 as_misskey git -C "$MISSKEY_DIR" diff --stat
 classify_current_source
 if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
-	(( SOURCE_PATCH_COUNT == ${#SERIES[@]} )) || fail 'partial patch state detected after application'
+	(( SOURCE_PATCH_COUNT == TARGET_PATCH_COUNT )) || fail 'partial patch state detected after application'
 else
 	(( SOURCE_PATCH_COUNT == 0 )) || fail 'managed patch residue detected in Vanilla source'
 fi
 
 if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
 	step 'Install canonical asset'
-	install -o "$MISSKEY_USER" -g "$(id -gn "$MISSKEY_USER")" -m 0644 "$ASSET_FILE" "$MISSKEY_DIR/packages/frontend/assets/unknown.png"
+	install -o "$MISSKEY_USER" -g "$MISSKEY_GROUP" -m 0644 "$ASSET_FILE" "$MISSKEY_DIR/packages/frontend/assets/unknown.png"
 	[[ "$(sha256sum "$MISSKEY_DIR/packages/frontend/assets/unknown.png" | awk '{print $1}')" == "$ASSET_ACTUAL" ]] || fail 'installed asset checksum mismatch'
 else
 	step 'Retain exact official Vanilla asset'
@@ -1793,7 +1911,7 @@ SERVICE_START_EPOCH=$(date +%s)
 DOWNTIME_SECONDS=$((SERVICE_START_EPOCH - SERVICE_STOP_EPOCH))
 
 if [[ "$UPDATE_FLAVOR" == 'patched' ]]; then
-	write_patch_state_files "$STATE_DIR" current-patch-manifest.tsv current-patch-series "${#SERIES[@]}"
+	write_patch_state_files "$STATE_DIR" current-patch-manifest.tsv current-patch-series "$TARGET_PATCH_COUNT"
 else
 	write_patch_state_files "$STATE_DIR" current-patch-manifest.tsv current-patch-series 0
 fi
